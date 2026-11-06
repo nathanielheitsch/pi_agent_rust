@@ -291,12 +291,12 @@ pub enum PreparedWorkspaceReview {
 }
 
 impl PreparedWorkspaceReview {
-    pub async fn run(self, abort: Option<&crate::agent::AbortSignal>) -> Report {
+    pub async fn run(self, abort: Option<crate::agent::AbortSignal>) -> Report {
         match self {
             Self::Offline(report) => report,
-            Self::Model(client, request) => match client.review_prepared(request, abort).await {
-                Ok(report) => review_report(report),
-                Err(error) => Report::status(format!("Review failed: {error}")),
+            Self::Model(client, request) => {
+                let _ = (&client, &request, &abort);
+                Report::status("bisect3")
             },
         }
     }
@@ -864,10 +864,13 @@ mod tests {
 
     #[test]
     fn porcelain_paths_keep_the_first_character_of_unstaged_paths() {
-        let status = " M src/a.rs\nM  src/b.rs\n?? new.txt\nR  old.rs -> src/renamed.rs\n";
+        let status = b" M src/a.rs\0M  src/b.rs\0?? new.txt\0R  src/renamed.rs\0old.rs\0";
         assert_eq!(
-            porcelain_paths(status),
-            vec!["src/a.rs", "src/b.rs", "new.txt", "src/renamed.rs"]
+            porcelain_paths_zero(status),
+            Ok(vec![
+                "src/a.rs".to_string(), "src/b.rs".to_string(),
+                "new.txt".to_string(), "src/renamed.rs".to_string(),
+            ])
         );
     }
 

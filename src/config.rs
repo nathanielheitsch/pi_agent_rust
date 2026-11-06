@@ -113,6 +113,10 @@ pub struct Config {
     pub lsp: Option<LspSettings>,
     /// Approval mode settings (bd-cv653.3.19).
     pub approval: Option<ApprovalSettings>,
+    /// hashline-edit tool settings (pi-hashline-edit defaults).
+    pub hashline: Option<HashlineSettings>,
+    /// MCP settings slot; per-server `mcp.json` `timeout_ms` still wins.
+    pub mcp: Option<McpSettings>,
 
     /// HTTP transport settings — proxy configuration (#210).
     ///
@@ -507,6 +511,38 @@ pub struct PlanSettings {
     /// (`--plan-yolo` wins over this). Default: false.
     #[serde(alias = "autoApprove", alias = "yolo")]
     pub auto_approve: Option<bool>,
+}
+
+/// Hashline-edit tool configuration (pi-hashline-edit defaults).
+///
+/// `hashline.hash_length`: tag width, default 2, clamped into 2..4.
+/// `hashline.grep`: default false. `hashline.replace_text`: default true.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct HashlineSettings {
+    /// Tag width for hashline markers. Default: 2, clamped to 2..4.
+    #[serde(alias = "hashLength")]
+    pub hash_length: Option<u8>,
+    /// Enable grep-assisted line resolution. Default: false.
+    pub grep: Option<bool>,
+    /// Enable replace-text mode. Default: true.
+    #[serde(alias = "replaceText")]
+    pub replace_text: Option<bool>,
+}
+
+/// MCP settings slot (native MCP is file/CLI-sourced; this is the
+/// settings-side override only). A per-server `mcp.json` `timeout_ms`
+/// still wins over `default_timeout_ms`.
+///
+/// `default_timeout_ms` is clamped into 1..3_600_000 by the merge so it always
+/// lands inside the range `src/mcp/config.rs::validate_timeout` admits.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct McpSettings {
+    /// Fallback per-server timeout in milliseconds when neither the
+    /// settings nor the server entry set one.
+    #[serde(alias = "defaultTimeoutMs")]
+    pub default_timeout_ms: Option<u64>,
 }
 
 /// Advisor configuration (bd-cv653.3.5 -> .3.3).
@@ -956,6 +992,8 @@ impl Config {
             advisor: merge_advisor(base.advisor, other.advisor),
             lsp: merge_lsp(base.lsp, other.lsp),
             approval: merge_approval(base.approval, other.approval),
+            hashline: merge_hashline(base.hashline, other.hashline),
+            mcp: merge_mcp(base.mcp, other.mcp),
             request_timeout_secs: other.request_timeout_secs.or(base.request_timeout_secs),
             http: merge_http_settings(base.http, other.http),
 
@@ -2036,7 +2074,10 @@ fn merge_bash(base: Option<BashSettings>, other: Option<BashSettings>) -> Option
             mediation_dcg: other.mediation_dcg.or(base.mediation_dcg),
             pty: other.pty.or(base.pty),
             persistent: other.persistent.or(base.persistent),
-            auto_background: merge_bash_auto_background(base.auto_background, other.auto_background),
+            auto_background: merge_bash_auto_background(
+                base.auto_background,
+                other.auto_background,
+            ),
         }),
         (None, Some(other)) => Some(other),
         (Some(base), None) => Some(base),
@@ -2232,6 +2273,58 @@ fn merge_plan(base: Option<PlanSettings>, other: Option<PlanSettings>) -> Option
         (Some(base), None) => Some(base),
         (None, None) => None,
     }
+}
+
+/// Merge hashline-edit settings (other wins per field). The merged tag width is
+/// clamped into 2..4 for every layer combination, so a single-layer settings
+/// file cannot smuggle an out-of-range width downstream.
+fn merge_hashline(
+    base: Option<HashlineSettings>,
+    other: Option<HashlineSettings>,
+) -> Option<HashlineSettings> {
+    let merged = match (base, other) {
+        (Some(base), Some(other)) => Some(HashlineSettings {
+            hash_length: other.hash_length.or(base.hash_length),
+            grep: other.grep.or(base.grep),
+            replace_text: other.replace_text.or(base.replace_text),
+        }),
+        (None, Some(other)) => Some(other),
+        (Some(base), None) => Some(base),
+        (None, None) => None,
+    };
+    merged.map(|settings| HashlineSettings {
+        hash_length: settings.hash_length.map(|len| len.clamp(2u8, 4u8)),
+        grep: settings.grep,
+        replace_text: settings.replace_text,
+    })
+}
+
+/// Bounds for the MCP settings-slot fallback timeout. The lower bound rejects
+/// `0` (unbounded timeouts are not supported anywhere in the MCP stack); the
+/// upper bound mirrors `src/mcp/config.rs::MAX_MCP_TIMEOUT_MS`.
+const MCP_SETTINGS_MIN_TIMEOUT_MS: u64 = 1;
+const MCP_SETTINGS_MAX_TIMEOUT_MS: u64 = 3_600_000;
+
+/// Merge MCP settings (other wins per field; the fallback timeout is clamped
+/// into the range the MCP discovery validator admits, for every layer
+/// combination).
+fn merge_mcp(base: Option<McpSettings>, other: Option<McpSettings>) -> Option<McpSettings> {
+    let merged = match (base, other) {
+        (Some(base), Some(other)) => Some(McpSettings {
+            default_timeout_ms: other.default_timeout_ms.or(base.default_timeout_ms),
+        }),
+        (None, Some(other)) => Some(other),
+        (Some(base), None) => Some(base),
+        (None, None) => None,
+    };
+    merged.map(|settings| McpSettings {
+        default_timeout_ms: settings
+            .default_timeout_ms
+            .map(|timeout_ms| timeout_ms.clamp(
+                MCP_SETTINGS_MIN_TIMEOUT_MS,
+                MCP_SETTINGS_MAX_TIMEOUT_MS,
+            )),
+    })
 }
 
 /// Merge tool settings (other wins per tool-mode entry).
@@ -2545,22 +2638,31 @@ mod tests {
         );
         let global: Config = serde_json::from_value(json!({
             "advisor": {"enabled": false, "timeoutSecs": 25, "continueSeverity": "blocker"}
-        })).expect("global settings");
+        }))
+        .expect("global settings");
         let project: Config = serde_json::from_value(json!({
             "advisor": {"timeoutSecs": 8}
-        })).expect("project settings");
+        }))
+        .expect("project settings");
         let inherited = Config::merge(global, project);
         assert!(!inherited.advisor_enabled());
         assert_eq!(inherited.advisor_timeout_secs(), 8);
-        assert_eq!(inherited.advisor_continue_severity(), ContinueSeverity::Blocker);
+        assert_eq!(
+            inherited.advisor_continue_severity(),
+            ContinueSeverity::Blocker
+        );
 
         let override_config: Config = serde_json::from_value(json!({
             "advisor": {"enabled": true, "continue_severity": "nit"}
-        })).expect("project override");
+        }))
+        .expect("project override");
         let overridden = Config::merge(inherited, override_config);
         assert!(overridden.advisor_enabled());
         assert_eq!(overridden.advisor_timeout_secs(), 8);
-        assert_eq!(overridden.advisor_continue_severity(), ContinueSeverity::Nit);
+        assert_eq!(
+            overridden.advisor_continue_severity(),
+            ContinueSeverity::Nit
+        );
     }
 
     #[test]
@@ -2570,7 +2672,11 @@ mod tests {
             r#"{"bash":{"auto_background":{"enabled":false,"threshold_ms":250}}}"#,
         ] {
             let config: Config = serde_json::from_str(content).expect("bash settings");
-            let settings = config.bash.expect("bash").auto_background.expect("auto background");
+            let settings = config
+                .bash
+                .expect("bash")
+                .auto_background
+                .expect("auto background");
             assert_eq!(settings.enabled, Some(false));
             assert_eq!(settings.threshold_ms, Some(250));
             assert!(unrecognised_setting_keys(content).is_empty());
@@ -2581,10 +2687,12 @@ mod tests {
                 "persistent": false,
                 "autoBackground": {"enabled": false, "thresholdMs": 400}
             }
-        })).expect("global settings");
+        }))
+        .expect("global settings");
         let project: Config = serde_json::from_value(json!({
             "bash": {"autoBackground": {"enabled": true}}
-        })).expect("project settings");
+        }))
+        .expect("project settings");
         let merged = Config::merge(global, project);
         let bash = merged.bash.expect("merged bash");
         assert_eq!(bash.mediation.as_deref(), Some("block-high"));
@@ -2592,9 +2700,12 @@ mod tests {
         let auto = bash.auto_background.expect("merged auto background");
         assert_eq!(auto.enabled, Some(true));
         assert_eq!(auto.threshold_ms, Some(400));
-        assert!(serde_json::from_value::<Config>(json!({
-            "bash": {"autoBackground": {"thresholdMs": -1}}
-        })).is_err());
+        assert!(
+            serde_json::from_value::<Config>(json!({
+                "bash": {"autoBackground": {"thresholdMs": -1}}
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -5174,5 +5285,159 @@ mod tests {
                 assert_eq!(dst1, dst2);
             }
         }
+    }
+
+    // ── hashline / mcp settings round trips ─────────────────────────
+
+    #[test]
+    fn merge_hashline_round_trip() {
+        use super::{HashlineSettings, merge_hashline};
+        // Absent sections stay absent.
+        assert!(merge_hashline(None, None).is_none());
+
+        // One side alone passes through unchanged.
+        let only_other = HashlineSettings {
+            hash_length: Some(3),
+            grep: None,
+            replace_text: None,
+        };
+        assert_eq!(merge_hashline(None, Some(only_other.clone())), Some(only_other.clone()));
+        assert_eq!(merge_hashline(Some(only_other.clone()), None), Some(only_other));
+
+        // Partial fields merge field-wise, other wins.
+        let base = HashlineSettings {
+            hash_length: Some(2),
+            grep: Some(true),
+            replace_text: Some(true),
+        };
+        let other = HashlineSettings {
+            hash_length: Some(4),
+            grep: None,
+            replace_text: None,
+        };
+        let merged = merge_hashline(Some(base), Some(other)).unwrap();
+        assert_eq!(merged.hash_length, Some(4));
+        assert_eq!(merged.grep, Some(true));
+        assert_eq!(merged.replace_text, Some(true));
+
+        // Out-of-range widths clamp into 2..4 through the settings merge.
+        let wide = HashlineSettings {
+            hash_length: Some(9),
+            grep: None,
+            replace_text: None,
+        };
+        let clamped = merge_hashline(
+            Some(wide.clone()),
+            Some(HashlineSettings {
+                hash_length: None,
+                grep: None,
+                replace_text: None,
+            }),
+        )
+        .unwrap();
+        assert_eq!(clamped.hash_length, Some(4));
+        let narrow = HashlineSettings {
+            hash_length: Some(1),
+            grep: None,
+            replace_text: None,
+        };
+        let clamped = merge_hashline(
+            Some(narrow.clone()),
+            Some(HashlineSettings {
+                hash_length: None,
+                grep: None,
+                replace_text: None,
+            }),
+        )
+        .unwrap();
+        assert_eq!(clamped.hash_length, Some(2));
+
+        // The camelCase alias round-trips and is recognised as a setting.
+        let parsed: Config = serde_json::from_str(r#"{"hashline":{"hashLength":3,"grep":true}}"#)
+            .expect("hashline settings");
+        let parsed = parsed.hashline.unwrap_or(HashlineSettings {
+            hash_length: None,
+            grep: None,
+            replace_text: None,
+        });
+        assert_eq!(parsed.hash_length, Some(3));
+        assert_eq!(parsed.grep, Some(true));
+
+        // An absent section stays None, so nothing downstream sees a default.
+        assert!(Config::default().hashline.is_none());
+        // A one-sided layer is clamped too, so a single settings file cannot
+        // smuggle an out-of-range width past the merge.
+        let wide_only = merge_hashline(Some(wide.clone()), None).unwrap();
+        assert_eq!(wide_only.hash_length, Some(4));
+        assert_eq!(merge_hashline(None, Some(wide.clone())).unwrap().hash_length, Some(4));
+        let narrow_only = merge_hashline(None, Some(narrow.clone())).unwrap();
+        assert_eq!(narrow_only.hash_length, Some(2));
+
+        // Base-only precedence: other's empty fields fall back to base.
+        let base_only = HashlineSettings {
+            hash_length: Some(3),
+            grep: Some(false),
+            replace_text: Some(false),
+        };
+        let merged = merge_hashline(
+            Some(base_only),
+            Some(HashlineSettings {
+                hash_length: None,
+                grep: None,
+                replace_text: None,
+            }),
+        )
+        .unwrap();
+        assert_eq!(merged.hash_length, Some(3));
+        assert_eq!(merged.grep, Some(false));
+        assert_eq!(merged.replace_text, Some(false));
+
+    }
+
+    #[test]
+    fn merge_mcp_round_trip() {
+        use super::{McpSettings, merge_mcp};
+        assert!(merge_mcp(None, None).is_none());
+
+        let base = McpSettings {
+            default_timeout_ms: Some(30_000u64),
+        };
+        let other = McpSettings {
+            default_timeout_ms: None,
+        };
+        let merged = merge_mcp(Some(base.clone()), Some(other.clone())).unwrap();
+        assert_eq!(merged.default_timeout_ms, Some(30_000u64));
+
+        let over: Config =
+            serde_json::from_str(r#"{"mcp":{"defaultTimeoutMs":45000}}"#).expect("mcp settings");
+        let over = over.mcp.unwrap_or(McpSettings {
+            default_timeout_ms: None,
+        });
+        assert_eq!(over.default_timeout_ms, Some(45_000u64));
+
+        assert!(Config::default().mcp.is_none());
+
+        // The mcp slot is one-sided-clamped as well: a single layer's out-of-range
+        // fallback cannot reach the MCP discovery validator.
+        let wide = merge_mcp(Some(McpSettings { default_timeout_ms: Some(7_200_000u64) }), None);
+        assert_eq!(wide.unwrap().default_timeout_ms, Some(3_600_000u64));
+        let narrow = merge_mcp(
+            None,
+            Some(McpSettings { default_timeout_ms: Some(0u64) }),
+        );
+        assert_eq!(narrow.unwrap().default_timeout_ms, Some(1u64));
+
+        // Override precedence is other<-base: a present other wins; an absent other
+        // keeps base, including when base is the stronger layer.
+        let strong = McpSettings { default_timeout_ms: Some(60_000u64) };
+        assert_eq!(
+            merge_mcp(Some(strong.clone()), Some(base)).unwrap().default_timeout_ms,
+            Some(60_000u64),
+        );
+        assert_eq!(
+            merge_mcp(Some(strong), Some(other)).unwrap().default_timeout_ms,
+            Some(60_000u64),
+        );
+
     }
 }

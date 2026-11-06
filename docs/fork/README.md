@@ -1,5 +1,11 @@
 # Fork plan: hardbake the user's TS pi extensions into the Rust port
 
+> **Current status:** Phase 0A is an unfinished checkpoint, not quality-approved.
+> See [branch progress and resume notes](IMPLEMENTATION_PLAN.md#6-branch-checkpoint--incomplete-implementation).
+> The model-review path still contains a diagnostic stub; tests have not passed.
+> The A/B/C options below are historical exploration: the current plan ports all
+> fifteen extensions to native Rust, without dropping capabilities.
+
 ## Why this fork exists
 
 The upstream Rust port is not a drop-in for TypeScript Pi, and it should not become one

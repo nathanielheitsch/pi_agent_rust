@@ -221,6 +221,13 @@ pub struct ExtensionToolDef {
     pub label: Option<String>,
     pub description: String,
     pub parameters: serde_json::Value,
+    /// One-line usage guidance (`promptSnippet` at the TS extension surface).
+    /// Reaches the system prompt the way a built-in tool's description does.
+    #[serde(default, alias = "promptSnippet")]
+    pub prompt_snippet: Option<String>,
+    /// Usage guidance bullets (`promptGuidelines` at the TS extension surface).
+    #[serde(default, alias = "promptGuidelines")]
+    pub prompt_guidelines: Option<Vec<String>>,
 }
 
 /// Delegates to the canonical streaming implementation in `extensions.rs`.
@@ -21564,6 +21571,13 @@ function __pi_register_tool(spec) {
     if (typeof spec.label === 'string') {
         toolSpec.label = spec.label;
     }
+    if (typeof spec.promptSnippet === 'string') {
+        toolSpec.promptSnippet = spec.promptSnippet;
+    }
+    if (Array.isArray(spec.promptGuidelines)) {
+        toolSpec.promptGuidelines = spec.promptGuidelines
+            .filter((g) => typeof g === 'string' && g.length > 0);
+    }
 
     if (__pi_tool_index.has(name)) {
         const existing = __pi_tool_index.get(name);
@@ -30343,6 +30357,56 @@ export const bundled = globalThis.__doomWadFinderProbe.bundled;
                             "path": { "type": "string" }
                         }
                     }),
+                    prompt_snippet: None,
+                    prompt_guidelines: None,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn pijs_runtime_get_registered_tools_forwards_prompt_fields() {
+        futures::executor::block_on(async {
+            let runtime = PiJsRuntime::with_clock(DeterministicClock::new(0))
+                .await
+                .expect("create runtime");
+
+            runtime
+                .eval(&privileged_test_script(
+                    &runtime,
+                    r"
+                __pi_begin_extension(__pi_test_secret, 'ext.test', { name: 'Test' });
+                pi.registerTool({
+                    name: 'my_tool',
+                    label: 'My Tool',
+                    description: 'Does stuff',
+                    parameters: { type: 'object', properties: { path: { type: 'string' } } },
+                    promptSnippet: 'one line',
+                    promptGuidelines: ['a', 'b'],
+                    execute: async (_callId, _input) => { return { ok: true }; },
+                });
+                __pi_end_extension(__pi_test_secret);
+            ",
+                ))
+                .await
+                .expect("eval");
+
+            let tools = runtime.get_registered_tools().await.expect("get tools");
+            assert_eq!(tools.len(), 1);
+            assert_eq!(
+                tools[0],
+                ExtensionToolDef {
+                    name: "my_tool".to_string(),
+                    label: Some("My Tool".to_string()),
+                    description: "Does stuff".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string" }
+                        }
+                    }),
+                    prompt_snippet: Some("one line".to_string()),
+                    prompt_guidelines: Some(vec!["a".to_string(), "b".to_string()]),
                 }
             );
         });

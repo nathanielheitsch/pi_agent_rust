@@ -249,3 +249,96 @@ Authoritative, in order — all four must be green before a slice is committable
 
 Docs-only phases (this document and `phase-0-native-gaps.md`) are not code, so 2–4 do
 not apply; they must not be cited as met for code phases.
+
+## 6. Branch checkpoint — incomplete implementation
+
+This section records the worktree inspected for the user's checkpoint request on
+branch `issue/main-12j9w`, based on planning commit `cefbf5c0a`. It supersedes earlier
+conversation claims of completion. This is a WIP checkpoint, not Phase 0A acceptance
+or a release. The user explicitly requested committing the current progress; this
+does not waive the quality requirements for declaring the implementation complete.
+
+### Direction and phase status
+
+All fifteen extensions remain in scope as native Rust functionality, grouped into
+five subsystems: context management, orchestration, peer coordination, presentation,
+and existing-native gap closes. The older A/B/C vendoring options in the initial
+README are historical exploration, not permission to drop extensions or leave TS as
+the final implementation. The phase sequence remains 0A safe local gaps, 0B deferred
+gaps in their owning phases, 1 presentation, 2 orchestration/MCP, 3 fold/distill,
+4 cross-session peers, and 5 retirement of the TS implementations.
+
+Planning is committed. Phase 0A is partially implemented and unverified. Phases 1–5
+have not been implemented by this branch's fork work.
+
+### Implementation present in the checkpoint
+
+- `src/extensions_js.rs`: optional `promptSnippet`/`promptGuidelines` metadata,
+  bridge forwarding, and regression coverage. Consumption by the system prompt is
+  still deferred; forwarding alone does not deliver the full behavior.
+- `src/config.rs` and `src/tools.rs`: hashline settings, layered merge/clamping,
+  tool wiring, and merge tests. Runtime behavior and settings round trips have not
+  passed execution tests.
+- `src/bash_mediation.rs`: plan-mode command classes for git mutation, output
+  redirection, and mutating pipeline targets, plus tests. These are not evidence
+  that shell parsing or the end-to-end planning gate is complete or secure.
+- `src/config.rs`: MCP timeout settings slot and merge/clamping tests. End-to-end
+  consumption is NOT established: `src/mcp/manager.rs` has no checkpoint diff;
+  earlier conversation claims that this file wired the setting are unverified.
+- Compile-repair edits span eval I/O/error handling, digest encoding, MCP atomics,
+  session-control duplicate method removal, URL handling, and interactive review
+  dispatch. These support development but are not new extension-port completion.
+- `src/lsp/client/workspace/tests.rs` and `src/lsp/jsonrpc/outbound.rs`: the last
+  crew left test API/key-type repairs on disk. Their verification did not finish
+  reliably; the edits are included as unfinished work, not a successful repair.
+- `src/tools/bash_session.rs`, `src/tools/structured_json.rs`, and
+  `src/tools/structured_sqlite.rs` include substantial reflow from earlier workers,
+  alongside repair work. Review this noise separately before final acceptance.
+- `.gitignore` ignores crew runtime state. The checkpoint does not include crew
+  runtime artifacts or temporary compiler logs.
+
+### Critical known regression: model review is stubbed
+
+`PreparedWorkspaceReview::run` in `src/interactive/workspace_reports.rs` currently
+returns `Report::status("bisect3")` for its model branch instead of invoking
+`client.review_prepared`. This is leftover diagnostic scaffolding. **Model-backed
+workspace review is not functional in this checkpoint.** The owned abort argument
+and matching interactive callers are present, but their correctness cannot be
+inferred from a compile result obtained with the real model path stubbed out.
+Restore the model call with cancellation preserved, then resolve any resulting
+lifetime/Send error; never retain this stub as a compilation fix.
+
+### Validation evidence and limitations
+
+- Earlier local `cargo check --locked --lib` returned exit 0, with warnings.
+  This is historical diagnostic evidence only, especially because the model-review
+  stub invalidates the earlier claim that the real review path compiled correctly.
+- The last recorded full lib-test build before the LSP edits failed with **43
+  compiler errors and 5 warnings**, exit 101 (`/tmp/p0a_t7.txt` in that session).
+  Tests did not execute. This count is NOT a fresh measurement of this checkpoint.
+- Reported error families: LSP URI versus PathBuf keys and request-handler API
+  drift; missing FIFO functions on this platform; stale agent compaction/test
+  APIs; SDK tool/message types; eval bridge arguments, result inference, and digest
+  formatting. Many sites were unchanged from HEAD, but no clean baseline build
+  proved that every remaining error was pre-existing. Do not label them all baseline.
+- The Phase 0A config/bash/bridge files disappeared from the compiler diagnostic
+  list after local test-source fixes. That does not prove their tests pass.
+- `dsr quality --tool pi_agent_rust` was attempted at checkpoint preparation and
+  failed with `dsr: command not found` (exit 127). `br`, `ubs`, and `am` were also
+  unavailable in PATH. No authoritative quality approval or reservation claim is
+  made. Earlier direct Cargo invocations must not be treated as a DSR substitute.
+- `git diff --check` passed during checkpoint preparation. Fresh independent review,
+  reachability checks, UBS, formatting, Clippy, integration/conformance lanes, and
+  authoritative DSR quality remain outstanding. No release has been produced.
+
+### Resume order
+
+1. Confirm prior crew workers are stopped before editing their files; preserve all
+   unrelated work. Inspect the actual diff rather than trusting prior crew summaries.
+2. Restore the real model-review path and preserve cancellation. Review the LSP
+   edits and the settings consumers, especially MCP timeout propagation.
+3. Obtain the DSR entry point and run the authoritative recipe. Repair the actual
+   remaining failures without deleting tests, weakening gates, or guessing a new
+   baseline. Keep Phase 0A open until its tests execute successfully.
+4. Obtain fresh review of the complete Phase 0A diff and compile repairs, then make
+   an accepted implementation commit. Only afterward start Phase 1 presentation.

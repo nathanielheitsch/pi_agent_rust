@@ -132,7 +132,7 @@ pub(super) async fn run_review(
 ) {
     let result = workspace_reports::prepare_review(cwd, args, &handle.session().agent);
     let msg = match result {
-        Ok(request) => render(request.run(abort).await),
+        Ok(request) => render(request.run(abort.map(|signal| signal.clone())).await),
         Err(error) => PiMsg::AgentError(format!("Review failed: {error}")),
     };
     let _ = agent_tx.send(msg);

@@ -141,7 +141,7 @@ impl Archive {
             .map_err(|failure| error("EVAL_ARTIFACT_PUBLISH", failure))?;
         // Hash the bytes actually read into the final staging file, not only
         // what the producer intended to write. Receipt is created after publish.
-        let digest = format!("{:x}", source.digest.finalize());
+        let digest = crate::package_manager::hex_encode(&source.digest.finalize());
         Ok(json!({
             "schema":SCHEMA, "status":"written", "format":"jsonl",
             "path":self.target.path(), "bytes":bytes, "sha256":digest,

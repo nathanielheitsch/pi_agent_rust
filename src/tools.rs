@@ -3475,6 +3475,22 @@ pub(crate) fn search_backend_from_config(config: Option<&Config>) -> SearchBacke
     }
 }
 
+/// Tag-width bounds for the `hashline` settings slot (`hashline.hash_length`).
+/// The default is the narrowest width; wider tags are a pure suffix extension
+/// of the 2-character digest rendered by [`compute_line_hash`].
+const HASHLINE_MIN_TAG_WIDTH: u8 = 2;
+const HASHLINE_MAX_TAG_WIDTH: u8 = 4;
+
+/// Effective `hashline_edit` tag width from the `hashline` settings slot
+/// (`hashline.hash_length`, default 2, clamped into 2..4).
+pub(crate) fn hashline_length_from_config(config: Option<&Config>) -> u8 {
+    config
+        .and_then(|config| config.hashline.as_ref())
+        .and_then(|hashline| hashline.hash_length)
+        .unwrap_or(HASHLINE_MIN_TAG_WIDTH)
+        .clamp(HASHLINE_MIN_TAG_WIDTH, HASHLINE_MAX_TAG_WIDTH)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecursiveScanAccess {
     DirectoriesOnly,
@@ -5822,7 +5838,8 @@ impl ToolRegistry {
                 "hashline_edit" => tools.push(Box::new(
                     HashlineEditTool::new(cwd)
                         .with_mutation_recorder(mutation_recorder.clone())
-                        .with_workspace(workspace.clone()),
+                        .with_workspace(workspace.clone())
+                        .with_hash_length(hashline_length_from_config(config)),
                 )),
                 "jobs" => tools.push(Box::new(JobsTool::new())),
                 "hub" => tools.push(Box::new(HubTool::new(cwd))),
@@ -6610,12 +6627,9 @@ impl ReadTool {
             } else {
                 crate::url_read::SsrfPolicy::BlockPrivateTargets
             };
-            let outcome = crate::url_read::fetch(
-                &source,
-                policy,
-                crate::url_read::UrlReadMode::SourceUtf8,
-            )
-            .await?;
+            let outcome =
+                crate::url_read::fetch(&source, policy, crate::url_read::UrlReadMode::SourceUtf8)
+                    .await?;
             if outcome.download_truncated {
                 return Err(Error::tool(
                     "read",
@@ -6629,14 +6643,14 @@ impl ReadTool {
                 .into_bytes()
         } else {
             let archive = crate::archive_read::parse_path(&source)?;
-            let source_path = archive.as_ref().map_or(source.as_str(), |archive| {
-                archive.archive_path.as_str()
-            });
+            let source_path = archive
+                .as_ref()
+                .map_or(source.as_str(), |archive| archive.archive_path.as_str());
             let path = resolve_read_path(source_path, &self.cwd);
             let path = enforce_read_scope(&path, &self.cwd, &self.workspace)?;
             let mut roots = self.workspace.snapshot_or(&self.cwd).all();
             roots.push(Config::global_dir());
-            asupersync::runtime::spawn_blocking_io(move || -> Result<Vec<u8>> {
+            asupersync::runtime::spawn_blocking(move || -> Result<Vec<u8>> {
                 let file = open_regular_file_within_roots_with(&path, &roots, || {})
                     .map_err(|error| Error::tool("read", error.to_string()))?;
                 if let Some(archive) = archive {
@@ -7015,11 +7029,8 @@ impl Tool for ReadTool {
                 let mut prefix = [0_u8; 16];
                 let mut prefix_len = 0;
                 while prefix_len < prefix.len() {
-                    let read = positioned_file_read(
-                        &file,
-                        &mut prefix[prefix_len..],
-                        prefix_len as u64,
-                    )?;
+                    let read =
+                        positioned_file_read(&file, &mut prefix[prefix_len..], prefix_len as u64)?;
                     if read == 0 {
                         break;
                     }
@@ -7076,7 +7087,7 @@ impl Tool for ReadTool {
                     "[ARCHIVE_HASHLINE] Archive members are read-only views and cannot provide source edit anchors",
                 ));
             }
-            let outcome = asupersync::runtime::spawn_blocking_io(move || {
+            let outcome = asupersync::runtime::spawn_blocking(move || {
                 crate::archive_read::read_open_file(std_file, &archive.member)
             })
             .await?;
@@ -7291,7 +7302,7 @@ impl Tool for ReadTool {
                 ));
             }
             let source = path.to_string_lossy().into_owned();
-            let outcome = asupersync::runtime::spawn_blocking_io(move || {
+            let outcome = asupersync::runtime::spawn_blocking(move || {
                 crate::url_read::convert_bytes(&source, document_mime, &bytes, false)
             })
             .await?;
@@ -9002,19 +9013,30 @@ impl Tool for BashTool {
             && (timeout_secs == 0 || timeout_secs.saturating_mul(1000) > threshold_ms);
         let persistent = cfg!(unix)
             && input.background != Some(true)
-            && self.mediation.as_ref().and_then(|settings| settings.persistent).unwrap_or(true);
-        let background_session_id = if input.background == Some(true) || auto_background || persistent {
-            Some(self.job_session_scope.session_id().await?)
-        } else {
-            None
-        };
+            && self
+                .mediation
+                .as_ref()
+                .and_then(|settings| settings.persistent)
+                .unwrap_or(true);
+        let background_session_id =
+            if input.background == Some(true) || auto_background || persistent {
+                Some(self.job_session_scope.session_id().await?)
+            } else {
+                None
+            };
         let mut shell_state = None;
         let mut shell_notice = None;
         if persistent {
-            let shell = self.shell_path.clone().map_or_else(default_bash_shell, Ok)?;
+            let shell = self
+                .shell_path
+                .clone()
+                .map_or_else(default_bash_shell, Ok)?;
             // Shell snapshots use native Bash declarations. An explicitly
             // selected non-Bash shell continues using its existing runner.
-            if Path::new(&shell).file_name().is_some_and(|name| name == "bash") {
+            if Path::new(&shell)
+                .file_name()
+                .is_some_and(|name| name == "bash")
+            {
                 match bash_session::acquire(
                     background_session_id.as_deref().ok_or_else(|| {
                         Error::tool("bash", "session shell scope was not resolved")
@@ -9024,12 +9046,16 @@ impl Tool for BashTool {
                     self.command_prefix.as_deref(),
                     &input.command,
                 )? {
-                    bash_session::Acquisition::Persistent(transaction) => shell_state = Some(transaction),
+                    bash_session::Acquisition::Persistent(transaction) => {
+                        shell_state = Some(transaction)
+                    }
                     bash_session::Acquisition::Temporary(notice) => shell_notice = Some(notice),
                 }
             }
         }
-        let execution_cwd = shell_state.as_ref().map_or(self.cwd.as_path(), bash_session::ShellTransaction::cwd);
+        let execution_cwd = shell_state
+            .as_ref()
+            .map_or(self.cwd.as_path(), bash_session::ShellTransaction::cwd);
         let mut mediation_warning = None;
 
         // Mediation gate (bd-cv653.1.7): classify before spawn against
@@ -9053,8 +9079,12 @@ impl Tool for BashTool {
                     let verdict = crate::bash_mediation::MediationVerdict::Allow { hits: vec![] };
                     let _ = verdict;
                 } else {
-                    let verdict =
-                        crate::bash_mediation::assess(&input.command, mediation, mode, execution_cwd);
+                    let verdict = crate::bash_mediation::assess(
+                        &input.command,
+                        mediation,
+                        mode,
+                        execution_cwd,
+                    );
                     match verdict {
                         crate::bash_mediation::MediationVerdict::Allow { hits } => {
                             if !hits.is_empty() {
@@ -9165,7 +9195,10 @@ impl Tool for BashTool {
                 )
                 .await?
         {
-            return Err(Error::tool("bash", "Command cancelled before the session shell could start"));
+            return Err(Error::tool(
+                "bash",
+                "Command cancelled before the session shell could start",
+            ));
         }
 
         if auto_background
@@ -9191,8 +9224,15 @@ impl Tool for BashTool {
         let result = execute_bash_spawn(
             execution_cwd,
             self.shell_path.as_deref(),
-            if shell_state.is_some() { None } else { self.command_prefix.as_deref() },
-            shell_state.as_ref().map_or(input.command.as_str(), bash_session::ShellTransaction::command),
+            if shell_state.is_some() {
+                None
+            } else {
+                self.command_prefix.as_deref()
+            },
+            shell_state.as_ref().map_or(
+                input.command.as_str(),
+                bash_session::ShellTransaction::command,
+            ),
             input.timeout,
             on_update.as_deref(),
             use_pty,
@@ -9211,11 +9251,12 @@ impl Tool for BashTool {
             shell_state.finish(!result.cancelled && result.exit_code >= 0 && owns_session);
         }
 
-        self.bash_result_output(tool_call_id, result)
-            .map(|output| Self::annotate_bash_mediation(
+        self.bash_result_output(tool_call_id, result).map(|output| {
+            Self::annotate_bash_mediation(
                 Self::annotate_shell_state(output, shell_notice),
                 &mediation_warning,
-            ))
+            )
+        })
     }
 }
 
@@ -9367,8 +9408,15 @@ impl Tool for JobsTool {
                                         "{}: {}{} (pid {}, exit {}, artifact {})",
                                         job["id"].as_str().unwrap_or("?"),
                                         job["status"].as_str().unwrap_or("?"),
-                                        if job.get("schema").and_then(serde_json::Value::as_str) == Some("pi.host_job.v1") {
-                                            format!(" [{}]", job.get("command").and_then(serde_json::Value::as_str).unwrap_or("native task"))
+                                        if job.get("schema").and_then(serde_json::Value::as_str)
+                                            == Some("pi.host_job.v1")
+                                        {
+                                            format!(
+                                                " [{}]",
+                                                job.get("command")
+                                                    .and_then(serde_json::Value::as_str)
+                                                    .unwrap_or("native task")
+                                            )
                                         } else {
                                             String::new()
                                         },
@@ -10077,7 +10125,9 @@ impl HubTool {
         }
     }
 
-    fn format_wait_reply(result: &crate::agent_hub::InboxWaitResult) -> (String, serde_json::Value) {
+    fn format_wait_reply(
+        result: &crate::agent_hub::InboxWaitResult,
+    ) -> (String, serde_json::Value) {
         use crate::agent_hub::InboxWaitStatus;
 
         let mut text = match result.status {
@@ -12459,10 +12509,11 @@ impl GrepTool {
             ));
         }
         if path.starts_with("http://") || path.starts_with("https://") {
-            let (url, mode) = path.strip_suffix(":raw").map_or(
-                (path, crate::url_read::UrlReadMode::Reader),
-                |url| (url, crate::url_read::UrlReadMode::Raw),
-            );
+            let (url, mode) = path
+                .strip_suffix(":raw")
+                .map_or((path, crate::url_read::UrlReadMode::Reader), |url| {
+                    (url, crate::url_read::UrlReadMode::Raw)
+                });
             let policy = if self.allow_private_urls {
                 crate::url_read::SsrfPolicy::AllowPrivateTargets
             } else {
@@ -12483,7 +12534,7 @@ impl GrepTool {
         }
         let path_owned = path.to_string();
         let cwd = self.cwd.clone();
-        let resolved = asupersync::runtime::spawn_blocking_io(move || {
+        let resolved = asupersync::runtime::spawn_blocking(move || {
             let _guard = owner.cx().clone().set_current_restricted();
             owner
                 .checkpoint()
@@ -12537,7 +12588,9 @@ impl GrepTool {
         if effective_limit > MAX_GREP_RESOURCE_MATCHES {
             return Err(Error::tool(
                 "grep",
-                format!("[GREP_RESOURCE_MATCH_LIMIT] Resource searches support at most {MAX_GREP_RESOURCE_MATCHES} matches; narrow the pattern or resource list"),
+                format!(
+                    "[GREP_RESOURCE_MATCH_LIMIT] Resource searches support at most {MAX_GREP_RESOURCE_MATCHES} matches; narrow the pattern or resource list"
+                ),
             ));
         }
         let pattern = if input.literal.unwrap_or(false) {
@@ -12573,10 +12626,12 @@ impl GrepTool {
                 ));
             }
             source_truncated |= resource.source_truncated;
-            let scan_limit = effective_limit.saturating_sub(match_count).saturating_add(1);
+            let scan_limit = effective_limit
+                .saturating_sub(match_count)
+                .saturating_add(1);
             let scan_matcher = Arc::clone(&matcher);
             let scan_owner = owner.clone();
-            let (content, mut match_lines) = asupersync::runtime::spawn_blocking_io(move || {
+            let (content, mut match_lines) = asupersync::runtime::spawn_blocking(move || {
                 grep_resource_match_lines(resource.content, &scan_matcher, scan_limit, &scan_owner)
             })
             .await?;
@@ -13324,20 +13379,22 @@ impl Tool for GrepTool {
             }
             Err(_) => return self.effects(),
         };
-        paths.into_iter().fold(ToolEffects::read(), |effects, path| {
-            let scheme = path.split_once("://").map_or("", |(scheme, _)| scheme);
-            let resource_effects = match scheme {
-                "http" | "https" => ToolEffects::network(),
-                "pr" | "issue" | "ssh" => ToolEffects::process().union(ToolEffects::network()),
-                "conflict" => ToolEffects::process(),
-                "agent" if crate::agent_hub::ipc::inherited_channel_present() => {
-                    ToolEffects::network()
-                }
-                "agent" | "skill" | "prompt" | "local" => ToolEffects::read(),
-                _ => self.effects(),
-            };
-            effects.union(resource_effects)
-        })
+        paths
+            .into_iter()
+            .fold(ToolEffects::read(), |effects, path| {
+                let scheme = path.split_once("://").map_or("", |(scheme, _)| scheme);
+                let resource_effects = match scheme {
+                    "http" | "https" => ToolEffects::network(),
+                    "pr" | "issue" | "ssh" => ToolEffects::process().union(ToolEffects::network()),
+                    "conflict" => ToolEffects::process(),
+                    "agent" if crate::agent_hub::ipc::inherited_channel_present() => {
+                        ToolEffects::network()
+                    }
+                    "agent" | "skill" | "prompt" | "local" => ToolEffects::read(),
+                    _ => self.effects(),
+                };
+                effects.union(resource_effects)
+            })
     }
 
     #[allow(clippy::too_many_lines)]
@@ -13358,7 +13415,9 @@ impl Tool for GrepTool {
         }
 
         if let Some(paths) = grep_resource_paths(input.path.as_deref())? {
-            return self.execute_resource_grep(tool_call_id, &input, &paths).await;
+            return self
+                .execute_resource_grep(tool_call_id, &input, &paths)
+                .await;
         }
 
         if self.backend == SearchBackend::External && !rg_available() {
@@ -15854,7 +15913,10 @@ impl PtyProcessGuard {
     }
 
     fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> {
-        let status = self.child.as_mut().map_or(Ok(None), |child| child.try_wait())?;
+        let status = self
+            .child
+            .as_mut()
+            .map_or(Ok(None), |child| child.try_wait())?;
         if status.is_some() {
             self.retire_reaped_group();
             drop(self.shell_process.take());
@@ -16897,6 +16959,32 @@ fn hashline_dict() -> &'static [[u8; 2]; 256] {
     })
 }
 
+/// Raw xxh32 digest for a line at the given 0-indexed position. The digest
+/// is the single source of tag characters: [`compute_line_hash`] renders its low
+/// byte as the default 2-character tag, and [`tag_chars_for_hash`] renders `width`
+/// nibbles of it for wider `hashline.hash_length` tags.
+///
+/// The algorithm:
+/// 1. Strip trailing `\r`
+/// 2. Remove all whitespace to get a "significant" string
+/// 3. If the significant string contains at least one letter or digit, seed = 0;
+///    otherwise seed = line index (to disambiguate punctuation-only or blank lines)
+/// 4. Compute `xxh32(significant_bytes, seed)`
+fn line_hash_digest(line_idx: usize, line: &str) -> u32 {
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    // Remove all whitespace
+    let significant: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+    let has_alnum = significant.chars().any(char::is_alphanumeric);
+    let seed: u32 = if has_alnum {
+        0
+    } else {
+        #[allow(clippy::cast_possible_truncation)]
+        let s = line_idx as u32;
+        s
+    };
+    xxhash_rust::xxh32::xxh32(significant.as_bytes(), seed)
+}
+
 /// Compute a 2-character hash tag for a line at the given 0-indexed position.
 ///
 /// The algorithm:
@@ -16907,20 +16995,22 @@ fn hashline_dict() -> &'static [[u8; 2]; 256] {
 /// 4. Compute `xxh32(significant_bytes, seed) & 0xFF`
 /// 5. Encode the low byte as 2 nibble chars from `NIBBLE_STR`
 fn compute_line_hash(line_idx: usize, line: &str) -> [u8; 2] {
-    let line = line.strip_suffix('\r').unwrap_or(line);
-    // Remove all whitespace
-    let significant: String = line.chars().filter(|c| !c.is_whitespace()).collect();
-    let has_alnum = significant.chars().any(char::is_alphanumeric);
-    let seed = if has_alnum {
-        0
-    } else {
-        #[allow(clippy::cast_possible_truncation)]
-        let s = line_idx as u32;
-        s
-    };
-    let hash = xxhash_rust::xxh32::xxh32(significant.as_bytes(), seed);
-    let byte = (hash & 0xFF) as usize;
+    let byte = (line_hash_digest(line_idx, line) & 0xFF) as usize;
     hashline_dict()[byte]
+}
+
+/// Render `width` tag characters from a raw xxh32 digest, low byte first. The
+/// first two characters are exactly the pair rendered by [`compute_line_hash`],
+/// so `width == HASHLINE_MIN_TAG_WIDTH` reproduces the default tag byte-for-byte;
+/// wider widths append the digest's next nibbles.
+fn tag_chars_for_hash(digest: u32, width: u8) -> String {
+    let width = usize::from(width.clamp(HASHLINE_MIN_TAG_WIDTH, HASHLINE_MAX_TAG_WIDTH));
+    let mut out = String::with_capacity(width);
+    for shift in 0..width {
+        let nibble = usize::from(((digest >> (8 * shift)) & 0x0F) as u8);
+        out.push(NIBBLE_STR[nibble] as char);
+    }
+    out
 }
 
 /// Format a hashline tag as `"N#AB"` where N is the 1-indexed line number.
@@ -16929,12 +17019,45 @@ fn format_hashline_tag(line_idx: usize, line: &str) -> String {
     format!("{}#{}{}", line_idx + 1, h[0] as char, h[1] as char)
 }
 
+/// Format a hashline tag with `width` tag characters (settings:
+/// `hashline.hash_length`). At `HASHLINE_MIN_TAG_WIDTH` this is byte-for-byte
+/// the default `"N#AB"` form, so existing tags and fixtures are unchanged.
+fn format_hashline_tag_width(line_idx: usize, line: &str, width: u8) -> String {
+    format!(
+        "{}#{}",
+        line_idx + 1,
+        tag_chars_for_hash(line_hash_digest(line_idx, line), width),
+    )
+}
+
 /// Compute a hashline tag, reapplying a stripped BOM for the first line if needed.
 fn format_hashline_tag_with_bom(line_idx: usize, line: &str, had_bom: bool) -> String {
     let h = compute_line_hash_with_bom(line_idx, line, had_bom);
     format!("{}#{}{}", line_idx + 1, h[0] as char, h[1] as char)
 }
 
+/// [`format_hashline_tag_with_bom`] at `width` tag characters.
+fn format_hashline_tag_with_bom_width(
+    line_idx: usize,
+    line: &str,
+    had_bom: bool,
+    width: u8,
+) -> String {
+    if had_bom && line_idx == 0 {
+        let mut with_bom = String::with_capacity(line.len().saturating_add(1));
+        with_bom.push('\u{FEFF}');
+        with_bom.push_str(line);
+        format!(
+            "{}#{}",
+            line_idx + 1,
+            tag_chars_for_hash(line_hash_digest(line_idx, &with_bom), width),
+        )
+    } else {
+        format_hashline_tag_width(line_idx, line, width)
+    }
+}
+
+/// [`compute_line_hash`] with the BOM re-applied to the first line.
 fn compute_line_hash_with_bom(line_idx: usize, line: &str, had_bom: bool) -> [u8; 2] {
     if had_bom && line_idx == 0 {
         let mut with_bom = String::with_capacity(line.len().saturating_add(1));
@@ -16943,6 +17066,18 @@ fn compute_line_hash_with_bom(line_idx: usize, line: &str, had_bom: bool) -> [u8
         compute_line_hash(line_idx, &with_bom)
     } else {
         compute_line_hash(line_idx, line)
+    }
+}
+
+/// [`line_hash_digest`] with the BOM re-applied to the first line.
+fn line_hash_digest_with_bom(line_idx: usize, line: &str, had_bom: bool) -> u32 {
+    if had_bom && line_idx == 0 {
+        let mut with_bom = String::with_capacity(line.len().saturating_add(1));
+        with_bom.push('\u{FEFF}');
+        with_bom.push_str(line);
+        line_hash_digest(line_idx, &with_bom)
+    } else {
+        line_hash_digest(line_idx, line)
     }
 }
 
@@ -16955,6 +17090,11 @@ fn hashline_tag_regex() -> &'static regex::Regex {
         regex::Regex::new(r"^[\s>+\-]*(\d+)\s*#\s*([ZPMQVRWSNKTXJBYH]{2})")
             .expect("valid hashline regex")
     })
+}
+
+/// True for the `NIBBLE_STR` alphabet the hashline tags are built from.
+fn is_hashline_tag_char(byte: u8) -> bool {
+    NIBBLE_STR.contains(&byte)
 }
 
 /// Parse a hashline tag reference string into (1-indexed line number, 2-byte hash).
@@ -16971,6 +17111,51 @@ fn parse_hashline_tag(ref_str: &str) -> std::result::Result<(usize, [u8; 2]), St
     }
     let hash_bytes = caps[2].as_bytes();
     Ok((line_num, [hash_bytes[0], hash_bytes[1]]))
+}
+
+/// Reference tag characters extended to `width` for one `hashline_edit` anchor:
+/// `(1-indexed line, tag characters, effective width)`. The 2-character grammar
+/// validated by [`parse_hashline_tag`] stays the gate; `NIBBLE_STR` characters
+/// immediately after it extend the tag when `hashline.hash_length` asks for a
+/// wider tag, and the effective width shrinks to what the reference actually
+/// supplies so a default 2-character tag still validates under wider settings.
+fn hashline_tag_expectation(
+    ref_str: &str,
+    width: u8,
+) -> std::result::Result<(usize, [u8; HASHLINE_MAX_TAG_WIDTH as usize], usize), String> {
+    let (line_num, pair) = parse_hashline_tag(ref_str)?;
+    let requested = usize::from(width.clamp(HASHLINE_MIN_TAG_WIDTH, HASHLINE_MAX_TAG_WIDTH));
+    let mut tag = [pair[0], pair[1], 0, 0];
+    let separator = ref_str.find('#').unwrap_or(ref_str.len());
+    let mut cursor = separator.saturating_add(1);
+    while cursor < ref_str.len() && b" \t".contains(&ref_str.as_bytes()[cursor]) {
+        cursor += 1;
+    }
+    let mut effective = usize::from(HASHLINE_MIN_TAG_WIDTH);
+    while effective < requested {
+        let index = cursor + effective;
+        if index < ref_str.len() && is_hashline_tag_char(ref_str.as_bytes()[index]) {
+            tag[effective] = ref_str.as_bytes()[index];
+            effective += 1;
+        } else {
+            break;
+        }
+    }
+    Ok((line_num, tag, effective))
+}
+
+/// The significant tag characters of a tag produced by
+/// [`hashline_tag_expectation`].
+fn hashline_tag_text(tag: [u8; HASHLINE_MAX_TAG_WIDTH as usize], effective: usize) -> String {
+    let effective = effective.clamp(
+        usize::from(HASHLINE_MIN_TAG_WIDTH),
+        usize::from(HASHLINE_MAX_TAG_WIDTH),
+    );
+    let mut out = String::with_capacity(effective);
+    for byte in tag.into_iter().take(effective) {
+        out.push(char::from(byte));
+    }
+    out
 }
 
 /// Strip hashline tag prefixes that models sometimes copy into replacement content.
@@ -17042,6 +17227,9 @@ pub struct HashlineEditTool {
     before_persist_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     mutation_recorder: Option<Arc<crate::undo::FileMutationRecorder>>,
     workspace: WorkspaceHandle,
+    /// Tag width (`hashline.hash_length`, already clamped into 2..4 by
+    /// [`hashline_length_from_config`] / [`with_hash_length`]).
+    hash_length: u8,
 }
 
 impl HashlineEditTool {
@@ -17051,6 +17239,7 @@ impl HashlineEditTool {
             before_persist_hook: None,
             mutation_recorder: None,
             workspace: WorkspaceHandle::default(),
+            hash_length: HASHLINE_MIN_TAG_WIDTH,
         }
     }
 
@@ -17071,6 +17260,14 @@ impl HashlineEditTool {
         self
     }
 
+    /// Set the hashline tag width for this instance (settings:
+    /// `hashline.hash_length`; widths outside 2..4 are clamped).
+    #[must_use]
+    pub fn with_hash_length(mut self, hash_length: u8) -> Self {
+        self.hash_length = hash_length.clamp(HASHLINE_MIN_TAG_WIDTH, HASHLINE_MAX_TAG_WIDTH);
+        self
+    }
+
     #[cfg(test)]
     fn with_before_persist_hook(cwd: &Path, hook: impl Fn() + Send + Sync + 'static) -> Self {
         Self {
@@ -17078,6 +17275,7 @@ impl HashlineEditTool {
             before_persist_hook: Some(Arc::new(hook)),
             mutation_recorder: None,
             workspace: WorkspaceHandle::default(),
+            hash_length: HASHLINE_MIN_TAG_WIDTH,
         }
     }
 }
@@ -22138,9 +22336,15 @@ mod tests {
             let prefix = format!("grep-agent-{}", uuid::Uuid::new_v4());
             let (accepted, pending, rejected) = {
                 let mut hub = crate::agent_hub::registry().lock().unwrap();
-                let accepted = hub.register(&format!("{prefix}-accepted"), "accepted fixture").unwrap();
-                let pending = hub.register(&format!("{prefix}-pending"), "pending fixture").unwrap();
-                let rejected = hub.register(&format!("{prefix}-rejected"), "cancelled fixture").unwrap();
+                let accepted = hub
+                    .register(&format!("{prefix}-accepted"), "accepted fixture")
+                    .unwrap();
+                let pending = hub
+                    .register(&format!("{prefix}-pending"), "pending fixture")
+                    .unwrap();
+                let rejected = hub
+                    .register(&format!("{prefix}-rejected"), "cancelled fixture")
+                    .unwrap();
                 hub.settle(&accepted.id, ChildStatus::Done);
                 hub.settle(&rejected.id, ChildStatus::Cancelled);
                 (
@@ -22165,10 +22369,20 @@ mod tests {
             );
             let tool = GrepTool::new(temp.path());
             let path = format!("agent://{}/findings/0/path", accepted.id);
-            let output = tool.execute("accepted-result", serde_json::json!({
-                "pattern":"src/needle.rs", "literal":true, "path":path,
-            }), None).await.unwrap();
-            assert_eq!(get_text(&output.content), format!("{path}:1: src/needle.rs"));
+            let output = tool
+                .execute(
+                    "accepted-result",
+                    serde_json::json!({
+                        "pattern":"src/needle.rs", "literal":true, "path":path,
+                    }),
+                    None,
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                get_text(&output.content),
+                format!("{path}:1: src/needle.rs")
+            );
             for (entry, code) in [
                 (pending, "PI_URL_AGENT_OUTPUT_PENDING"),
                 (rejected, "PI_URL_AGENT_OUTPUT_REJECTED"),
@@ -22187,12 +22401,20 @@ mod tests {
             let temp = tempfile::tempdir().unwrap();
             let name = format!("grep-external-{}", uuid::Uuid::new_v4());
             crate::url_router::write_local(&name, "prefix\0is still text\nneedle\n").unwrap();
-            let output = GrepTool::with_backend(temp.path(), SearchBackend::External).execute(
-                "virtual-native", serde_json::json!({
-                    "pattern":"needle", "path":format!("local://{name}"),
-                }), None,
-            ).await.unwrap();
-            assert_eq!(get_text(&output.content), format!("local://{name}:2: needle"));
+            let output = GrepTool::with_backend(temp.path(), SearchBackend::External)
+                .execute(
+                    "virtual-native",
+                    serde_json::json!({
+                        "pattern":"needle", "path":format!("local://{name}"),
+                    }),
+                    None,
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                get_text(&output.content),
+                format!("local://{name}:2: needle")
+            );
         });
     }
 
@@ -22203,11 +22425,16 @@ mod tests {
             let owner = AgentCx::for_request();
             owner.cx().set_cancel_requested(true);
             let tool = GrepTool::new(temp.path());
-            let error = owner.with_current(tool.execute(
-                "cancelled-resource", serde_json::json!({
-                    "pattern":"needle", "path":"local://must-not-resolve-after-cancel",
-                }), None,
-            )).await.unwrap_err();
+            let error = owner
+                .with_current(tool.execute(
+                    "cancelled-resource",
+                    serde_json::json!({
+                        "pattern":"needle", "path":"local://must-not-resolve-after-cancel",
+                    }),
+                    None,
+                ))
+                .await
+                .unwrap_err();
             assert!(error.to_string().contains("cancelled"), "{error}");
             assert!(!error.to_string().contains("PI_URL_UNRESOLVABLE"));
         });
@@ -22226,11 +22453,24 @@ mod tests {
             };
             assert!(owner.capabilities().io);
             assert!(!owner.capabilities().spawn);
-            for path in ["pr://1/diff", "issue://owner/repo/1", "ssh://must-not-connect/tmp/file", "conflict://*"] {
-                let error = owner.with_current(tool.execute(
-                    "spawn-denied", serde_json::json!({"pattern":"needle","path":path}), None,
-                )).await.unwrap_err();
-                assert!(error.to_string().contains("GREP_RESOURCE_PERMISSION"), "{path}: {error}");
+            for path in [
+                "pr://1/diff",
+                "issue://owner/repo/1",
+                "ssh://must-not-connect/tmp/file",
+                "conflict://*",
+            ] {
+                let error = owner
+                    .with_current(tool.execute(
+                        "spawn-denied",
+                        serde_json::json!({"pattern":"needle","path":path}),
+                        None,
+                    ))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    error.to_string().contains("GREP_RESOURCE_PERMISSION"),
+                    "{path}: {error}"
+                );
             }
         });
     }

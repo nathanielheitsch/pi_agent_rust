@@ -325,7 +325,7 @@ impl<'p> Invocation<'p> {
             let cwd = cwd.to_path_buf();
             let selection = self.selection.clone().ok_or_else(binding_error)?;
             let resolver_owner = owner.clone();
-            let judge = asupersync::runtime::spawn_blocking_io(move || {
+            let judge = asupersync::runtime::spawn_blocking(move || {
                 let _current = resolver_owner.cx().clone().set_current_restricted();
                 resolver_owner.checkpoint().map_err(|_| binding_error())?;
                 resolve(&cwd, &selection)

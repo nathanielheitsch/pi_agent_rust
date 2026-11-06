@@ -118,7 +118,7 @@ pub fn pty_required(command: &str) -> bool {
 
 use std::path::Path;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::config::BashSettings;
 
@@ -212,37 +212,171 @@ impl MediationVerdict {
     }
 }
 
+/// The single classification alphabet: the extension-level dangerous-command
+/// classes plus the plan-mode consulting tiers (bd-cv653.3.5 / Phase 0A GAP-3).
+/// Plan-mode hits are new variants of the SAME enum, so they are judged by the
+/// same tier/reason tables `assess` uses — there is no parallel classifier and
+/// no second regex table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandClass {
+    /// A class the extension-level classifier already knows.
+    Extension(crate::extensions::DangerousCommandClass),
+    /// A git subcommand from the mutation blocklist (commit/push/rm/reset/
+    /// rebase/force-push/cherry-pick/merge).
+    GitMutation,
+    /// Shell output redirection (`>` / `>>`) writing a file.
+    OutputRedirect,
+    /// A pipeline whose downstream stage mutates state (`… | rm …`).
+    MutatingPipeTarget,
+}
+
+/// The audit-tier label for the plan-mode tier. Distinct from `critical`/`high`,
+/// so no mediation mode can ever block on a plan-mode hit; only the plan-mode
+/// gate refuses them, and only while plan mode is consulting.
+const PLAN_MODE_TIER: &'static str = "plan_mode";
+
 /// dcg-blocked classes map to `critical` per the same-block semantics; our
 /// in-tree Critical tier mirrors that. High tier mirrors dcg's non-fatal
-/// dangerous patterns.
-const fn tier_of_class(class: crate::extensions::DangerousCommandClass) -> &'static str {
+/// dangerous patterns. Plan-mode tiers map to [`PLAN_MODE_TIER`].
+const fn tier_of_class(class: CommandClass) -> &'static str {
     use crate::extensions::DangerousCommandClass as C;
     match class {
-        C::RecursiveDelete | C::DeviceWrite | C::ForkBomb | C::DiskWipe | C::ReverseShell => {
-            "critical"
-        }
-        C::PipeToShell
-        | C::SystemShutdown
-        | C::PermissionEscalation
-        | C::ProcessTermination
-        | C::CredentialFileModification => "high",
+        CommandClass::Extension(C::RecursiveDelete)
+        | CommandClass::Extension(C::DeviceWrite)
+        | CommandClass::Extension(C::ForkBomb)
+        | CommandClass::Extension(C::DiskWipe)
+        | CommandClass::Extension(C::ReverseShell) => "critical",
+        CommandClass::Extension(C::PipeToShell)
+        | CommandClass::Extension(C::SystemShutdown)
+        | CommandClass::Extension(C::PermissionEscalation)
+        | CommandClass::Extension(C::ProcessTermination)
+        | CommandClass::Extension(C::CredentialFileModification) => "high",
+        CommandClass::GitMutation
+        | CommandClass::OutputRedirect
+        | CommandClass::MutatingPipeTarget => PLAN_MODE_TIER,
     }
 }
 
-const fn reason_of_class(class: crate::extensions::DangerousCommandClass) -> &'static str {
+const fn reason_of_class(class: CommandClass) -> &'static str {
     use crate::extensions::DangerousCommandClass as C;
     match class {
-        C::RecursiveDelete => "recursive deletion targeting root or broad paths",
-        C::DeviceWrite => "device-level writes (dd, mkfs, fdisk)",
-        C::ForkBomb => "fork bomb or process exhaustion",
-        C::PipeToShell => "pipe to shell execution",
-        C::SystemShutdown => "system shutdown or reboot",
-        C::PermissionEscalation => "broad permission changes",
-        C::ProcessTermination => "killing critical system processes",
-        C::CredentialFileModification => "modifying credential files",
-        C::DiskWipe => "disk wipe or overwrite patterns",
-        C::ReverseShell => "reverse shell / network exfiltration",
+        CommandClass::Extension(C::RecursiveDelete) => {
+            "recursive deletion targeting root or broad paths"
+        }
+        CommandClass::Extension(C::DeviceWrite) => "device-level writes (dd, mkfs, fdisk)",
+        CommandClass::Extension(C::ForkBomb) => "fork bomb or process exhaustion",
+        CommandClass::Extension(C::PipeToShell) => "pipe to shell execution",
+        CommandClass::Extension(C::SystemShutdown) => "system shutdown or reboot",
+        CommandClass::Extension(C::PermissionEscalation) => "broad permission changes",
+        CommandClass::Extension(C::ProcessTermination) => "killing critical system processes",
+        CommandClass::Extension(C::CredentialFileModification) => "modifying credential files",
+        CommandClass::Extension(C::DiskWipe) => "disk wipe or overwrite patterns",
+        CommandClass::Extension(C::ReverseShell) => "reverse shell / network exfiltration",
+        CommandClass::GitMutation => {
+            "git mutation subcommand (commit/push/rm/reset/rebase/force-push/cherry-pick/merge)"
+        }
+        CommandClass::OutputRedirect => "shell output redirection writes a file",
+        CommandClass::MutatingPipeTarget => "pipeline downstream stage mutates state",
     }
+}
+/// Plan-mode consulting tiers (bd-cv653.3.5 / Phase 0A GAP-3).
+///
+/// The TS semantics consulted while planning: a bash command that would mutate
+/// state is refused, an inspection-only command flows. These are TIERS of the
+/// table above — the same `CommandClass` alphabet, the same `tier_of_class`/
+/// `reason_of_class` pair — so `assess` and the plan gate share one classifier
+/// and one regex-free rule table. There is no second classifier and no parallel
+/// pattern list.
+//
+/// # Notes
+//
+/// - Rule ids are `pi.plan_mode:<Class>` so an audit payload names the tier that
+///   refused the command, not the class alone.
+//
+/// - Plan-mode hits NEVER carry `critical`/`high`, so `assess` cannot block on
+///   them and a `warn`/`block-*` mediation mode is unaffected by them.
+//
+/// - Conversely an extension-level hit is never demoted: a command mediation
+///   already classifies as dangerous is always mutating for plan purposes, so
+///   `classifies_mutating_for_plan` reports true for it too.
+const GIT_MUTATING_SUBCOMMANDS: &[&str] = &[
+    "commit",
+    "push",
+    "rm",
+    "reset",
+    "rebase",
+    "cherry-pick",
+    "merge",
+];
+
+// Commands that change the filesystem/process state when they are the head of
+// a pipeline stage. `git` is handled by its subcommand scan so `git log |`,
+// `git status |` stay read-only.
+const PIPE_MUTATING_HEADS: &[&str] = &[
+    "rm", "rmdir", "unlink", "mv", "cp", "install", "dd", "tee", "truncate", "sh", "bash", "zsh",
+    "dash", "fish", "python", "python3", "node", "ruby", "perl", "git", "mkfs", "fdisk", "chmod",
+    "chown", "kill", "killall", "pkill",
+];
+
+// Wrappers that do not change what the wrapped command does; the plan scan
+// unwraps them before reading the head.
+const COMMAND_WRAPPERS: &[&str] = &[
+    "sudo", "doas", "env", "time", "nice", "nohup", "xargs", "command", "exec", "stdbuf",
+];
+
+/// Extract the head argv words of one pipeline stage: skip `VAR=value`
+/// assignments, unwrap known wrappers (skipping their option arguments), and
+/// return `(argv0, rest)` with the leading `/usr/bin/` path stripped from
+/// argv0's basename.
+#[must_use]
+pub fn stage_head(stage: &str) -> (String, Vec<String>) {
+    let tokens: Vec<&str> = stage.split_whitespace().collect();
+    let mut index = 0_usize;
+    while index < tokens.len() {
+        let tok = tokens[index];
+        let is_assignment = !tok.starts_with('-')
+            && tok
+                .split_once('=')
+                .is_some_and(|(name, _)| !name.is_empty() && !name.contains('/'));
+        if is_assignment {
+            index += 1;
+            continue;
+        }
+        if tok == "git" {
+            // `git` is the head itself; subcommand scanning skips its options
+            // below.
+            break;
+        }
+        if COMMAND_WRAPPERS.contains(&tok) {
+            index += 1;
+            while index < tokens.len() {
+                let inner = tokens[index];
+                if inner.starts_with('-') {
+                    index += 1;
+                    // `-C dir`, `--dir=`, `-u NAME` style option arguments
+                    // cannot be the head word; skipping them is conservative
+                    // because the head is still the first non-option word.
+                    continue;
+                }
+                break;
+            }
+            continue;
+        }
+        break;
+    }
+    let Some(head) = tokens.get(index) else {
+        return (String::new(), Vec::new());
+    };
+    let head = head.rsplit('/').next().unwrap_or(head).to_string();
+    (
+        head,
+        tokens
+            .get(index + 1..)
+            .unwrap_or(&[])
+            .iter()
+            .map(|token| token.to_string())
+            .collect(),
+    )
 }
 
 /// Evaluate one command against the active mediation settings.
@@ -291,6 +425,120 @@ pub fn assess(
         _ => MediationVerdict::Allow { hits },
     }
 }
+/// Plan-mode consulting (bd-cv653.3.5 / Phase 0A GAP-3): the plan-mode tiers of
+/// the table above applied to one bash command.
+///
+/// The TS semantics consulted while planning — output redirection, a pipeline
+/// stage whose head mutates state, and the git mutation blocklist — are
+/// implemented as extra `CommandClass` variants judged by the SAME tier/reason
+/// tables, not as a second classifier or a parallel regex table.
+#[must_use]
+pub fn plan_mode_classes(command: &str) -> Vec<CommandClass> {
+    let lower = command.to_ascii_lowercase();
+    let mut classes: Vec<CommandClass> = Vec::new();
+    if has_output_redirect(&lower) {
+        classes.push(CommandClass::OutputRedirect);
+    }
+    for stage in split_pipeline(&lower) {
+        let (head, rest) = stage_head(&stage);
+        if head == "git" {
+            // Token scan rather than argv position: `git -C dir commit` and
+            // `git --some-flag rebase` must both hit, and a spurious match
+            // only ever refuses more in a read-only state.
+            if rest
+                .iter()
+                .any(|token| GIT_MUTATING_SUBCOMMANDS.contains(&token.as_str()))
+            {
+                classes.push(CommandClass::GitMutation);
+            }
+        } else if PIPE_MUTATING_HEADS.contains(&head.as_str()) {
+            classes.push(CommandClass::MutatingPipeTarget);
+        }
+    }
+    classes
+}
+
+/// Whether a command contains an unquoted file-writing redirection (`>` or
+/// `>>`). `>&1`/`2>&1` redirect file descriptors, not files, and `> /dev/null`
+/// discards, so none of those count as a state mutation — they appear in
+/// read-only inspection commands constantly and must not flip the verdict.
+fn has_output_redirect(command: &str) -> bool {
+    let chars = command.as_bytes();
+    let mut index = 0_usize;
+    let mut single = false;
+    let mut double = false;
+    while index < chars.len() {
+        let char = chars[index];
+        match char {
+            b'\'' if !double => single = !single,
+            b'"' if !single => double = !double,
+            b'>' => {
+                if single || double {
+                    index += 1;
+                    continue;
+                }
+                // Skip the second `>` of `>>`, then any `&`/digit fd forms.
+                if index + 1 < chars.len() && chars[index + 1] == b'>' {
+                    index += 1;
+                }
+                index += 1;
+                while index < chars.len() && chars[index] == b' ' {
+                    index += 1;
+                }
+                if index < chars.len() && chars[index] == b'&' {
+                    continue;
+                }
+                let start = index;
+                while index < chars.len()
+                    && !matches!(chars[index], b' ' | b'\t' | b';' | b'&' | b'|')
+                {
+                    index += 1;
+                }
+                let target = command.as_bytes().get(start.min(index)..index);
+                if target != Some(&b"/dev/null"[..]) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    false
+}
+
+/// Split a command into its pipeline stages on top-level `|` separators.
+///
+/// Quote-aware for the single/double quote families the redirection scanner
+/// already tracks, and `||` stays inside its stage because it is a shell
+/// control operator, not a pipeline separator.
+fn split_pipeline(command: &str) -> Vec<String> {
+    let bytes = command.as_bytes();
+    let mut stages: Vec<String> = Vec::new();
+    let mut start = 0_usize;
+    let mut index = 0_usize;
+    let mut single = false;
+    let mut double = false;
+    while index < bytes.len() {
+        let char = bytes[index];
+        match char {
+            b'\'' if !double => single = !single,
+            b'"' if !single => double = !double,
+            b'|' if !single && !double => {
+                if index + 1 < bytes.len() && bytes[index + 1] == b'|' {
+                    // `||` is control flow, not a pipeline; keep it whole.
+                    index += 1;
+                } else {
+                    stages.push(command.get(start..index).unwrap_or("").to_string());
+                    start = index + 1;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    stages.push(command.get(start..).unwrap_or("").to_string());
+    stages
+}
 
 /// The fallback verdict from the in-tree exec_mediation classifier.
 fn fallback_verdict(command: &str) -> Vec<RuleHit> {
@@ -298,8 +546,8 @@ fn fallback_verdict(command: &str) -> Vec<RuleHit> {
         .into_iter()
         .map(|class| RuleHit {
             rule_id: format!("pi.exec_mediation:{class:?}"),
-            tier: tier_of_class(class).to_string(),
-            reason: reason_of_class(class).to_string(),
+            tier: tier_of_class(CommandClass::Extension(class)).to_string(),
+            reason: reason_of_class(CommandClass::Extension(class)).to_string(),
             engine: "exec_mediation".to_string(),
         })
         .collect()
@@ -658,5 +906,49 @@ mod tests {
         assert!(!pty_required(""));
         assert!(!pty_required("FOO=bar echo hello"));
         assert!(!pty_required("git -C repo status"));
+    }
+
+    // GAP-3 (bd-cv653.3.5): plan-mode tiers share the CommandClass alphabet
+    // and the tier/reason tables `assess` uses. These cannot RUN while the
+    // lib-test target is baseline-red elsewhere in the tree; they compile
+    // inside the `--lib` structure and pin the table semantics.
+    #[test]
+    fn plan_mode_hits_output_redirect() {
+        let classes = plan_mode_classes("echo hi > out.txt");
+        assert!(classes.contains(&CommandClass::OutputRedirect));
+        assert_eq!(classes, vec![CommandClass::OutputRedirect]);
+    }
+
+    #[test]
+    fn plan_mode_ignores_fd_and_devnull_redirects() {
+        assert!(plan_mode_classes("echo hi >/dev/null").is_empty());
+        assert!(plan_mode_classes("make build 2>&1").is_empty());
+        assert!(plan_mode_classes("make build > /dev/null").is_empty());
+    }
+
+    #[test]
+    fn plan_mode_flags_git_mutation() {
+        let classes = plan_mode_classes("git -C dir commit -m msg");
+        assert!(classes.contains(&CommandClass::GitMutation));
+        assert!(!plan_mode_classes("git -C dir status").contains(&CommandClass::GitMutation));
+    }
+
+    #[test]
+    fn plan_mode_flags_mutating_pipe_target() {
+        let classes = plan_mode_classes("git log | rm -rf x");
+        assert!(classes.contains(&CommandClass::MutatingPipeTarget));
+        assert!(plan_mode_classes("git log | head -n 5").is_empty());
+    }
+
+    #[test]
+    fn plan_mode_classes_are_never_critical_or_high() {
+        for class in [
+            CommandClass::GitMutation,
+            CommandClass::OutputRedirect,
+            CommandClass::MutatingPipeTarget,
+        ] {
+            assert_eq!(tier_of_class(class), PLAN_MODE_TIER);
+            assert!(!reason_of_class(class).is_empty());
+        }
     }
 }

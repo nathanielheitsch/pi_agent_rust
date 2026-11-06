@@ -312,3 +312,10 @@ tests/ext_conformance/artifacts/doom-overlay/doom-debug.log
 .DS_Store
 README.md:*
 root@*
+
+/.crew/
+/.crew
+!.crew/artifacts/
+!.crew/graphs/
+!.crew/artifacts/.gitkeep
+!.crew/graphs/.gitkeep

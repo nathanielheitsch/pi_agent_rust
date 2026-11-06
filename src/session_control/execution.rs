@@ -17,21 +17,6 @@ use crate::model::{AssistantMessage, ContentBlock, ImageContent, TextContent, Us
 use super::{ControllableSession, ControlledTurn, SessionControlHandle, control_error};
 
 impl ControllableSession {
-    /// Start an attachment-bearing turn on this reusable controlled session.
-    ///
-    /// Text, images, audio and video retain their native block order. The SDK's
-    /// existing validation, provider media policy, input hooks, retry/failover
-    /// and persistence path remains authoritative; this does not read files or
-    /// fetch URLs. Obtain `turn.control()` before awaiting to steer or abort.
-    /// The returned turn can also use [`ControlledTurn::with_deadline`].
-    pub fn prompt_with_content(
-        &mut self,
-        content: Vec<ContentBlock>,
-        on_event: impl Fn(AgentEvent) + Send + Sync + 'static,
-    ) -> Result<ControlledTurn<impl Future<Output = Result<AssistantMessage>> + '_>> {
-        self.prompt_with_content_with_control(content, move |_, event| on_event(event))
-    }
-
     /// Native-content counterpart of [`Self::prompt_with_control`]. Every event
     /// receives this turn's control handle, including the first callback; no
     /// shared mutable session or separately published control slot is needed.

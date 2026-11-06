@@ -3383,7 +3383,7 @@ result in account suspension/ban. Prefer using an Anthropic API key (ANTHROPIC_A
         drop(agent);
         let agent = Arc::clone(&self.agent);
         let event_tx = self.event_tx.clone();
-        self.runtime_handle.spawn(async move {
+        self.runtime_handle.spawn_with_cx(move |_cx| async move {
             let cx = Cx::for_request();
             let note = match OwnedMutexGuard::lock(agent, &cx).await {
                 Ok(mut agent) => {
@@ -3930,7 +3930,7 @@ result in account suspension/ban. Prefer using an Anthropic API key (ANTHROPIC_A
         self.status_message = Some("Reviewing text changes with the current model (Esc to cancel)...".to_string());
         let event_tx = self.event_tx.clone();
         self.runtime_handle.spawn(async move {
-            let report = request.run(Some(&abort_signal)).await;
+            let report = request.run(Some(abort_signal)).await;
             let message = report.card.unwrap_or(report.status);
             let _ = crate::interactive::enqueue_pi_event(
                 &event_tx, &Cx::for_request(),
@@ -4681,7 +4681,7 @@ mod tests {
     use crate::extensions::ExtensionManager;
     use crate::keybindings::KeyBindings;
     use crate::model::{Message as ModelMessage, StreamEvent, Usage, UserContent, UserMessage};
-    use crate::models::{ExtensionProviderBinding, ModelEntry};
+    use crate::models::{ExtensionProviderBinding, ModelEntry, ModelRole};
     use crate::package_manager::PackageManager;
     use crate::provider::{Context, Provider, StreamOptions};
     use crate::provider::{InputType, Model, ModelCost};
