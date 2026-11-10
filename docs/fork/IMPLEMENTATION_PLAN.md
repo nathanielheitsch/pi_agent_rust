@@ -331,7 +331,68 @@ lifetime/Send error; never retain this stub as a compilation fix.
   reachability checks, UBS, formatting, Clippy, integration/conformance lanes, and
   authoritative DSR quality remain outstanding. No release has been produced.
 
-### Resume order
+### Session 2026-11-10 — two gaps closed end-to-end (non-authoritative evidence)
+
+Two Phase 0A rows now have a real consumer, each in its own commit on
+`issue/main-12j9w`. Evidence is pinned-nightly Cargo diagnostics only: **`dsr` is not
+installed on this machine**, so nothing here is quality approval, and no test
+EXECUTED because the lib-test target does not compile at HEAD.
+
+- **Gap 2.3 MCP settings slot — consumed** (`c0ca9edcf`). The slot previously had no
+  reader outside `src/config.rs`, so every server without a per-entry `timeout`
+  silently got the compiled-in 30s default. `McpManager::timeout_for` is now the
+  single precedence point (entry `timeout` > `mcp.default_timeout_ms` > compiled
+  default) and replaces the old `ServerEntry::timeout` on every request path:
+  initialize, `ensure_ready`, tool-call preparation, catalog refresh, context
+  requests. `Config::mcp_default_timeout_ms` is the one accessor; the four
+  construction sites chain a setter, so `new`/`bootstrap` signatures are unchanged.
+- **Gap 5.1 prompt guidance — consumed** (`74fa82820`). `promptSnippet`/`promptGuidelines`
+  were forwarded by the bridge and read by nothing. `Tool` gained `prompt_snippet`/
+  `prompt_guidelines` with neutral defaults, both extension wrappers delegate, and
+  `build_context` renders an "Extension Tool Guidance" block cached on the registry
+  generation. Guidance is collected only for tools that reach the schema and appends
+  to an existing prompt only, so an unpromoted tool is never advertised and a session
+  with no system prompt does not acquire one.
+- **Still unconsumed, deliberately** — `hashline.grep` and `hashline.replace_text`
+  (ask **A6** is open on how far to wire them); and the plan-mode classifier
+  `plan_mode_classes` is still called only by its own tests, so gaps 3.1/3.2 remain
+  open. The mode gate itself works at tool-effect level (`allows_effects` blocks
+  write/append/process under Planning); the classifier-vs-effect redundancy is
+  recorded under Validation below rather than wired.
+
+### Validation added this session (and its limits)
+
+- `cargo check --locked --lib` exit 0 on the pinned nightly.
+- `cargo check --locked --all-targets --keep-going` error set is **identical to HEAD**
+  (22 errors both; an empty diff between the sorted sets). HEAD baseline measured by
+  stashing this work in the same target directory, so 22 is pre-existing, not caused
+  by these commits. The lib-test target remains blocked by that baseline, so the two
+  new tests cannot execute yet and **no test pass is claimed**.
+- Added lines are `rustfmt`-clean; the pre-existing diff in those files is untouched.
+- `scripts/check_module_reachability.py`: 152 declared, 149 reachable, 3 allowlisted,
+  0 unreachable.
+- The earlier `bisect3` stub is gone: model-backed workspace review was restored in
+  `772e8275a` with cancellation and the privacy check intact.
+- Not yet run: Clippy, UBS, conformance, integration, and authoritative DSR quality.
+
+### Resume order (updated 2026-11-10)
+
+1. Obtain the DSR entry point and run the authoritative recipe; it is the only thing
+   that can turn the diagnostics above into an approval claim.
+2. Unblock the lib-test target (the 22 baseline errors: platform-gated FIFO helpers,
+   `LowerHex` on bitptr arrays, stale test-side APIs). Until then no Phase 0A test
+   executes, and Phase 0A stays open.
+3. Resolve ask A6, then wire or remove `hashline.grep`/`hashline.replace_text`.
+4. Decide gaps 3.1/3.2: either route `plan_mode_classes` into the bash path for
+   per-command read-only messaging, or record why tool-effect-level blocking is
+   sufficient and retire the classifier as dead code.
+5. Fresh review of the complete Phase 0A diff, then Phase 1 presentation (S4 renderer
+   must precede distill entry rendering and crew panel UI).
+
+### Resume order — superseded by the 2026-11-10 section above
+
+Retained as the checkpoint-time record; items 1 and 2 are complete (the `bisect3`
+stub was restored in `772e8275a`, and MCP timeout propagation landed in `c0ca9edcf`).
 
 1. Confirm prior crew workers are stopped before editing their files; preserve all
    unrelated work. Inspect the actual diff rather than trusting prior crew summaries.

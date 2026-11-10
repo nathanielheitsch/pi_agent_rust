@@ -127,6 +127,15 @@ marked UNVERIFIED and must not be used as a fix target until re-checked.
 
 ## Gap 2.3 — no `pub mcp` settings slot (pi-mcp-adapter config surface)
 
+- **Status (2026-11-10):** closed by `c0ca9edcf`, corrected by `2eca5767f`. The slot
+  exists AND is consumed: `McpManager::timeout_for` is the single precedence point
+  (per-server `timeout` > `mcp.default_timeout_ms` > compiled `DEFAULT_MCP_TIMEOUT`)
+  on every request path, including the four `HttpTransport` internal paths
+  (session renewal, notifications, server-response delivery, event-stream headers)
+  that the first commit left on the compiled default.
+  Not quality-approved: `dsr` is unavailable and the lib-test target does not compile
+  at HEAD, so the precedence test has not executed.
+
 - **Evidence:** `grep -n 'pub mcp' src/config.rs` returned **0**, while browser has
   `src/config.rs:105` `pub browser: Option<crate::browser::BrowserSettings>` merged by
   `merge_browser` `src/config.rs:2120` (call `:953`), and plan has `src/config.rs:93`
@@ -188,6 +197,14 @@ marked UNVERIFIED and must not be used as a fix target until re-checked.
   unsupported. Medium: it degrades to "not supported" rather than misbehaving.
 
 ## Gap 5.1 — `promptSnippet` / `promptGuidelines` are dropped by the bridge and absent natively (pi-ast-grep)
+
+- **Status (2026-11-10):** closed by `74fa82820`, corrected by `2eca5767f` for
+  extension-registered tools. `Tool::prompt_snippet`/`prompt_guidelines` reach an
+  "Extension Tool Guidance" block in the system prompt, limited to tools that
+  actually reach the provider schema, and guidelines-only tools now render too.
+  The native `ast_grep`/`ast_edit` tools still carry no snippet of their own, so the
+  pi-ast-grep guidance text itself is not reproduced; that copy is a Phase 0 follow-up.
+  Not quality-approved (see Gap 2.3 status).
 
 - **Evidence:** `grep` for `promptSnippet`/`promptGuidelines` across `src/` = **0**;
   the bridge builds the tool spec from only `name`, `description`, `parameters`,
