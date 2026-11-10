@@ -1,8 +1,11 @@
 # Fork plan: hardbake the user's TS pi extensions into the Rust port
 
-> **Current status:** Phase 0A is an unfinished checkpoint, not quality-approved.
+> **Current status:** Phase 0A is partially landed and not quality-approved. Two gaps
+> are closed end-to-end (`c0ca9edcf` MCP settings timeout, `74fa82820` extension prompt
+> guidance, corrected by `2eca5767f`); hashline and plan-mode gaps remain open.
 > See [branch progress and resume notes](IMPLEMENTATION_PLAN.md#6-branch-checkpoint--incomplete-implementation).
-> The model-review path still contains a diagnostic stub; tests have not passed.
+> The model-review stub was removed in `772e8275a`. No test has executed: the lib-test
+> target does not compile at HEAD, and `dsr` is not installed on this machine.
 > The A/B/C options below are historical exploration: the current plan ports all
 > fifteen extensions to native Rust, without dropping capabilities.
 
@@ -29,8 +32,8 @@ runtime stubs (`docs/extension-compatibility-matrix.md`), it cannot be C.
 | Extension | Verdict | Rationale (one line) |
 |---|---|---|
 | pi-hashline-edit | **A** | `hashline_edit` is an essential built-in (`src/xdev.rs:67` in `ESSENTIAL_DEFAULTS`, `src/tools.rs:5709`). |
-| pi-plan-mode | **A** | `submit_plan` is essential (`src/xdev.rs:74`) and plan settings are native (`src/config.rs:93`, `src/plan.rs`); bash filtering duplicates `src/bash_mediation.rs` (`src/config.rs:97`). |
-| pi-ast-grep | **A** | Native `ast_grep`/`ast_edit` sit in the discoverable tier (`pub mod ast_tools`, `src/lib.rs:105`; `src/tools.rs:5696-5697`). Keeping the TS one would lose its `promptSnippet`/`promptGuidelines`, which the Rust bridge does not forward (`src/extensions_js.rs:21559-21566`). |
+| pi-plan-mode | **A** | `submit_plan` is essential (`src/xdev.rs:74`) and plan settings are native (`src/config.rs:93`, `src/plan.rs`). Planning blocks mutations at tool-effect level (`PlanState::allows_effects` rejects write/append/process under `Planning`/`PendingApproval`), so the mode is enforced; what is NOT wired is per-command bash read-only filtering — `plan_mode_classes` (`src/bash_mediation.rs:436`) is called only by its own tests, so gaps 3.1/3.2 stay open. |
+| pi-ast-grep | **A** | Native `ast_grep`/`ast_edit` sit in the discoverable tier (`pub mod ast_tools`, `src/lib.rs:105`; `src/tools.rs:5696-5697`). The bridge now forwards `promptSnippet`/`promptGuidelines` and they reach the system prompt (`74fa82820`, `2eca5767f`), so dropping the TS extension no longer costs that guidance — but the native tools carry no snippet of their own yet, so the guidance text itself still needs porting. |
 | pi-agent-browser-native | **A** | Native CDP browser: `pub mod browser` (`src/lib.rs:113`), `BrowserSnapshot` + `BrowserElementRef{ref_id,tag,role,text,selector}` (`src/browser.rs:39-54`), `browser` in `KNOWN_TOOL_NAMES` (`src/tools.rs:5699`), settings at `src/config.rs:105`. Gap: its `doctor`/config CLIs and Electron paths have no Rust equivalent. |
 | pi-mcp-adapter | **A** | Native `pub mod mcp` + `src/mcp.rs`, tracked in `docs/mcp-progress.md`. Its OAuth keyring (`@napi-rs/keyring`) and `unix-socket-transport.ts` cannot run in the sandbox anyway, so C is the weaker option. |
 | pi-web-access | **A** | `web_search` is essential (`src/xdev.rs:73`); URL reads are native (`src/url_read.rs`, `src/url_router.rs`, `src/web_remote.rs`). Accepting the loss of the 27 search providers named in its description is the cheaper trade than carrying a `linkedom` load failure (`docs/extension-catalog.json:5970` vs the DOM stub claim at `docs/extension-compatibility-matrix.md:157`). |
