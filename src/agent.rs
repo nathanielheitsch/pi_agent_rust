@@ -1861,11 +1861,13 @@ pub struct Agent {
     /// The generation counter covers mid-session `xdev` promotions (bd-cv653.1.6).
     cached_tool_defs: Option<(u64, Vec<ToolDef>)>,
 
-    /// Cached extension tool guidance for the system prompt, keyed by the same
-    /// registry generation as [`Self::cached_tool_defs`]. Holds `promptSnippet`/
-    /// `promptGuidelines` from extension-registered tools so they reach the prompt
-    /// instead of being forwarded and dropped.
-    cached_tool_guidance: Option<(u64, String)>,
+    /// Extension tool guidance for the system prompt. Cached inputs, not the
+    /// rendered string: the entries are `Arc` clones of the exact tools that
+    /// reached the provider schema, so the guidance can never describe a tool the
+    /// schema does not contain, whatever the registry generation happens to cover.
+    /// Rendered per provider request, which costs one small string build and avoids
+    /// any dependence on generation covering promotions or `setActiveTools`.
+    guidance_tools: Vec<Arc<dyn Tool>>,
 
     /// Path-scoped imported workspace rules (bd-cv653.6.2), delivered as
     /// steering messages the first time a tool call touches a matching path.
@@ -2073,7 +2075,7 @@ impl Agent {
             job_session_scope,
             message_queue: MessageQueue::new(QueueMode::OneAtATime, QueueMode::OneAtATime),
             cached_tool_defs: None,
-            cached_tool_guidance: None,
+            guidance_tools: Vec::new(),
             scoped_rules: None,
             stream_rules: Vec::new(),
             stream_rule_source: None,
@@ -2773,29 +2775,24 @@ impl Agent {
             let visible = |tool: &Arc<dyn Tool>| {
                 !registry.is_discoverable(tool.name()) || promoted.contains(tool.name())
             };
-            let defs: Vec<ToolDef> = registry
-                .tools()
-                .iter()
-                .filter(|tool| visible(tool))
-                .map(|tool| ToolDef {
+            let mut defs: Vec<ToolDef> = Vec::new();
+            // One pass over one snapshot builds the schema and the guidance inputs
+            // together, so the two can never disagree about which tools are visible.
+            // Guidance holds Arc clones of exactly those tools; the block is rendered
+            // per request from this list.
+            let mut guidance_tools: Vec<Arc<dyn Tool>> = Vec::new();
+            for tool in registry.tools().iter().filter(|tool| visible(tool)) {
+                defs.push(ToolDef {
                     name: tool.name().to_string(),
                     description: tool.description().to_string(),
                     parameters: tool.parameters(),
-                })
-                .collect();
-            // Extension tools carry `promptSnippet`/`promptGuidelines` that the tool
-            // schema cannot express (when to use the tool, not what it returns). Only
-            // tools that actually reach the schema contribute, so guidance never
-            // advertises an unpromoted discoverable tool.
-            let guidance = crate::extension_tools::extension_tool_guidance(
-                registry
-                    .tools()
-                    .iter()
-                    .filter(|tool| visible(tool))
-                    .map(Arc::as_ref),
-            );
+                });
+                if tool.prompt_snippet().is_some() || !tool.prompt_guidelines().is_empty() {
+                    guidance_tools.push(Arc::clone(tool));
+                }
+            }
             self.cached_tool_defs = Some((generation, defs));
-            self.cached_tool_guidance = Some((generation, guidance));
+            self.guidance_tools = guidance_tools;
         }
         let tools = Cow::Borrowed(
             self.cached_tool_defs
@@ -2812,15 +2809,16 @@ impl Agent {
         }
         // Guidance appends to an existing prompt only: a session that deliberately
         // has no system prompt must not acquire one because an extension is mounted.
-        if let Some((_, guidance)) = self.cached_tool_guidance.as_ref()
-            && !guidance.is_empty()
+        if !self.guidance_tools.is_empty()
             && let Some(base) = system_prompt.as_deref()
         {
             let mut prompt = base.to_string();
             prompt.push_str(
                 "\n\n# Extension Tool Guidance\n\nUsage guidance for extension-registered tools:\n",
             );
-            prompt.push_str(guidance);
+            prompt.push_str(&crate::extension_tools::extension_tool_guidance(
+                self.guidance_tools.iter().map(Arc::as_ref),
+            ));
             system_prompt = Some(Cow::Owned(prompt));
         }
         Context {

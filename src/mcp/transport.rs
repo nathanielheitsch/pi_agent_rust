@@ -1450,6 +1450,13 @@ pub struct HttpTransport {
     session_changed: asupersync::sync::Notify,
     abort_notify: asupersync::sync::Notify,
     lane: std::sync::Arc<asupersync::sync::Mutex<()>>,
+    /// Per-operation timeout for transport-internal requests the manager did not
+    /// supply a timeout for: session renewal, notifications, server-response
+    /// delivery, and event-stream headers. Sourced from the same precedence as
+    /// manager-driven requests (`timeout` > `mcp.default_timeout_ms` > compiled
+    /// default), so the settings slot cannot be honored for `tools/call` while an
+    /// expired-session re-initialize silently reverts to the compiled default.
+    request_timeout: Duration,
 }
 
 #[derive(Default)]
@@ -1776,7 +1783,17 @@ impl HttpTransport {
             session_changed: asupersync::sync::Notify::new(),
             abort_notify: asupersync::sync::Notify::new(),
             lane: std::sync::Arc::new(asupersync::sync::Mutex::new(())),
+            request_timeout: DEFAULT_MCP_TIMEOUT,
         })
+    }
+
+    /// Set the timeout used by transport-internal requests. The manager supplies
+    /// its resolved per-server timeout; leaving this unset keeps the compiled
+    /// default, which is what standalone and test constructions want.
+    #[must_use]
+    pub fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
+        self.request_timeout = request_timeout;
+        self
     }
 
     fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -2373,7 +2390,7 @@ impl HttpTransport {
         let result = self
             .round_trip(
                 &frame,
-                DEFAULT_MCP_TIMEOUT,
+                self.request_timeout,
                 HttpRoundTripKind::AcceptedMessage {
                     description: "JSON-RPC notification",
                 },
@@ -2398,7 +2415,7 @@ impl HttpTransport {
         // request, whose client response is another HTTP round-trip.
         let result = Box::pin(self.round_trip_with_wire_state(
             frame,
-            DEFAULT_MCP_TIMEOUT,
+            self.request_timeout,
             HttpRoundTripKind::AcceptedMessage {
                 description: "JSON-RPC response",
             },
@@ -2443,7 +2460,7 @@ impl HttpTransport {
             })?;
             request = request.header("Last-Event-ID", last_event_id.to_string());
         }
-        let header_timeout = timeout.unwrap_or(DEFAULT_MCP_TIMEOUT);
+        let header_timeout = timeout.unwrap_or(self.request_timeout);
         Self::run_with_deadline(
             async move {
                 let response = request.no_timeout().send().await.map_err(|err| {
@@ -2900,7 +2917,7 @@ impl HttpTransport {
             })?;
         self.reset_session_state();
         let result = match self
-            .request_once("initialize", &initialize_params, DEFAULT_MCP_TIMEOUT)
+            .request_once("initialize", &initialize_params, self.request_timeout)
             .await
         {
             Ok(_) => {

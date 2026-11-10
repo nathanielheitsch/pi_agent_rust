@@ -1222,6 +1222,10 @@ impl McpManager {
         let owner = crate::agent_cx::AgentCx::for_current_or_request();
         connection::check_transport_owner(&owner, &config)?;
         let cwd = entry.effective_cwd(&self.inner.cwd);
+        // Resolved once here so the transport's internal requests (session renewal,
+        // notifications, response delivery, event-stream headers) use this server's
+        // timeout rather than reverting to the compiled default.
+        let request_timeout = self.timeout_for(entry);
         let workspace = self.inner.cwd.clone();
         let trust_path = self.inner.trust_path.clone();
         #[cfg(test)]
@@ -1283,8 +1287,10 @@ impl McpManager {
                 )?;
                 ensure_active()?;
                 return Ok(
-                    Box::new(super::transport::HttpTransport::new(&url, headers)?)
-                        as Box<dyn McpTransport>,
+                    Box::new(
+                        super::transport::HttpTransport::new(&url, headers)?
+                            .with_request_timeout(request_timeout),
+                    ) as Box<dyn McpTransport>,
                 );
             }
             let command = config.command.clone().ok_or_else(|| {

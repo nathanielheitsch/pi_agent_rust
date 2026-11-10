@@ -50,6 +50,22 @@ pub fn extension_tool_guidance<'a>(tools: impl Iterator<Item = &'a dyn Tool>) ->
             continue;
         }
         let Some(snippet) = tool.prompt_snippet() else {
+            // A tool may supply only `promptGuidelines`. Its bullets still have to
+            // reach the prompt, so the entry is emitted under the bare tool name.
+            let bullets: Vec<&str> = tool
+                .prompt_guidelines()
+                .iter()
+                .map(String::as_str)
+                .map(str::trim)
+                .filter(|bullet| !bullet.is_empty())
+                .collect();
+            if bullets.is_empty() {
+                continue;
+            }
+            let _ = std::fmt::Write::write_fmt(&mut guidance, format_args!("\n- {}:", tool.name()));
+            for bullet in bullets {
+                let _ = std::fmt::Write::write_fmt(&mut guidance, format_args!("\n  - {bullet}"));
+            }
             continue;
         };
         let _ = std::fmt::Write::write_fmt(
