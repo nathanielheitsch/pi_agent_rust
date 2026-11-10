@@ -597,8 +597,7 @@ mod tests {
         assert!(
             read_file_with(&base, &target, || {
                 std::fs::remove_file(&target).unwrap();
-                rustix::fs::mkfifo(&target, rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR)
-                    .unwrap();
+                crate::platform::make_fifo_fixture(&target).unwrap();
             })
             .is_err()
         );

@@ -123,6 +123,35 @@ async fn deliver_bash_result(
     }
 }
 
+/// Run a prepared `/review` and deliver its card on the UI channel.
+///
+/// The spawned task resolves its own context with `AgentCx::for_current_or_request()`
+/// rather than taking a `spawn_with_cx` closure argument: rustc#100013 cannot
+/// discharge the `'static` future bound for a future that captures a closure
+/// parameter. Inside a spawned task that lookup is the same authority the runtime
+/// would have handed to the closure.
+async fn deliver_review_report(
+    event_tx: asupersync::channel::mpsc::Sender<PiMsg>,
+    owner_session_id: String,
+    request_id: String,
+    request: super::workspace_reports::PreparedWorkspaceReview,
+    abort_signal: crate::agent::AbortSignal,
+) {
+    let cx = crate::agent_cx::AgentCx::for_current_or_request();
+    let report = request.run(Some(abort_signal)).await;
+    let message = report.card.unwrap_or(report.status);
+    let _ = crate::interactive::enqueue_pi_event(
+        &event_tx,
+        &cx,
+        PiMsg::ReviewFinished {
+            owner_session_id,
+            request_id,
+            message,
+        },
+    )
+    .await;
+}
+
 fn spawn_bash_completion(
     runtime_handle: &asupersync::runtime::RuntimeHandle,
     event_tx: asupersync::channel::mpsc::Sender<PiMsg>,
@@ -3929,14 +3958,19 @@ result in account suspension/ban. Prefer using an Anthropic API key (ANTHROPIC_A
         self.agent_state = AgentState::Processing;
         self.status_message = Some("Reviewing text changes with the current model (Esc to cancel)...".to_string());
         let event_tx = self.event_tx.clone();
-        self.runtime_handle.spawn(async move {
-            let report = request.run(Some(abort_signal)).await;
-            let message = report.card.unwrap_or(report.status);
-            let _ = crate::interactive::enqueue_pi_event(
-                &event_tx, &Cx::for_request(),
-                PiMsg::ReviewFinished { owner_session_id, request_id, message },
-            ).await;
-        });
+        // The task future is provably `'static` now that `review_prepared`
+        // moves its unit list into the deadline future instead of borrowing it
+        // across the provider await (rustc#100013 cannot otherwise prove the
+        // bound for a closure-spawned future). The task resolves its own
+        // context with `Cx::current()`, the same authority `spawn_with_cx`
+        // would have handed to the closure.
+        self.runtime_handle.spawn(deliver_review_report(
+            event_tx,
+            owner_session_id,
+            request_id,
+            request,
+            abort_signal,
+        ));
         self.scroll_to_bottom();
         None
     }

@@ -758,16 +758,24 @@ impl ModelReviewer {
     /// A partial review never produces a SHIP report or writes an output file.
     pub async fn review_prepared(
         &self,
-        request: PreparedReview,
+        mut request: PreparedReview,
         abort: Option<&crate::agent::AbortSignal>,
     ) -> Result<ReviewReport> {
         if !Arc::ptr_eq(&request.privacy, &self.privacy) {
             return Err(Error::validation("PI_REVIEW_PRIVACY: request belongs to a different reviewer"));
         }
         let files = request.units.len();
-        let findings = with_timeout_and_abort(REVIEW_TIMEOUT, abort, async {
-            futures::stream::iter(request.units.iter().enumerate())
-                .map(|(index, unit)| self.review_unit(index, unit, &request.system_prompt))
+        // The unit list is MOVED into the deadline future rather than borrowed out
+        // of `request`. A future that borrows `request` across this await cannot be
+        // proven `'static`, and rustc#100013 surfaces that as a lifetime-bound
+        // failure on whichever closure-spawn ultimately holds it — which is what
+        // made the UI `/review` task uncompilable. The report inputs below stay in
+        // `request` and are still read after the await.
+        let units = std::mem::take(&mut request.units);
+        let system_prompt = std::mem::take(&mut request.system_prompt);
+        let findings = with_timeout_and_abort(REVIEW_TIMEOUT, abort, async move {
+            futures::stream::iter(units.into_iter().enumerate())
+                .map(|(index, unit)| self.review_unit(index, unit, &system_prompt))
                 .buffer_unordered(REVIEW_CONCURRENCY)
                 .try_collect::<Vec<_>>()
                 .await
@@ -791,7 +799,7 @@ impl ModelReviewer {
     async fn review_unit(
         &self,
         index: usize,
-        unit: &ReviewUnit,
+        unit: ReviewUnit,
         system_prompt: &str,
     ) -> Result<Vec<ReviewFinding>> {
         let context = crate::provider::Context {
@@ -828,7 +836,7 @@ impl ModelReviewer {
         )?;
         let response: ModelReviewResponse = serde_json::from_value(protected)
             .map_err(|_| Error::validation("PI_REVIEW_PRIVACY: response projection changed finding shape"))?;
-        validate_model_findings(index, unit, response.findings)
+        validate_model_findings(index, &unit, response.findings)
     }
 }
 

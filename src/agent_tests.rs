@@ -1923,7 +1923,16 @@ mod tests {
             );
             let on_event: AgentEventHandler = Arc::new(|_| {});
             let result = agent.finalize_assistant_message(message, &on_event, false);
-            assert_eq!(serde_json::to_value(result).unwrap(), original);
+            assert_eq!(
+                serde_json::to_value(match result {
+                    crate::agent::AssistantStreamAttempt::Complete(message) => message,
+                    crate::agent::AssistantStreamAttempt::RuleInterrupted { .. } => {
+                        panic!("a validated terminal must complete, not be rule-interrupted")
+                    }
+                })
+                .unwrap(),
+                original
+            );
         }
     }
 
@@ -6445,7 +6454,7 @@ mod tests {
                 .expect("provider admission");
 
             agent_session
-                .apply_compaction_result(result, on_event, provider_admission)
+                .apply_compaction_result(result, on_event, provider_admission, None)
                 .await
                 .expect("apply compaction result");
 
@@ -6548,7 +6557,7 @@ mod tests {
             let outcome = asupersync::time::timeout(
                 asupersync::time::wall_now(),
                 Duration::from_secs(5),
-                agent_session.apply_compaction_result(result, on_event, provider_admission),
+                agent_session.apply_compaction_result(result, on_event, provider_admission, None),
             )
             .await
             .expect("session_compact hook must not deadlock on provider admission");
@@ -6630,7 +6639,7 @@ mod tests {
                 .expect("provider admission");
 
             let err = agent_session
-                .apply_compaction_result(result, on_event, provider_admission)
+                .apply_compaction_result(result, on_event, provider_admission, None)
                 .await
                 .expect_err("blocked persistence must fail");
             assert!(

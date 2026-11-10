@@ -294,11 +294,24 @@ impl PreparedWorkspaceReview {
     pub async fn run(self, abort: Option<crate::agent::AbortSignal>) -> Report {
         match self {
             Self::Offline(report) => report,
-            Self::Model(client, request) => {
-                let _ = (&client, &request, &abort);
-                Report::status("bisect3")
-            },
+            Self::Model(client, request) => run_model_review(client, request, abort).await,
         }
+    }
+}
+
+/// Borrowing `&ModelReviewer` across the provider await inside a closure-spawned
+/// async block leaves rustc unable to prove the task future is `'static`
+/// (rustc#100013), which is what made the model arm of the UI review task
+/// uncompilable. Owning every input in a concrete async fn confines the borrow to
+/// that fn's own future, so the spawned task's `'static` bound discharges.
+async fn run_model_review(
+    client: crate::review::ModelReviewer,
+    request: crate::review::PreparedReview,
+    abort: Option<crate::agent::AbortSignal>,
+) -> Report {
+    match client.review_prepared(request, abort.as_ref()).await {
+        Ok(report) => review_report(report),
+        Err(error) => Report::status(format!("Review failed: {error}")),
     }
 }
 
