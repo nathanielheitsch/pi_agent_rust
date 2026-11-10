@@ -660,7 +660,9 @@ impl AdvisorRuntime {
         let call = self.call_advisor(&digest);
         let timeout = remaining_time.map_or(self.timeout, |time| time.min(self.timeout));
         let reply =
-            match crate::text_completion::with_timeout_and_abort(timeout, abort, call).await {
+            match crate::text_completion::with_timeout_and_abort(timeout, abort.cloned(), call)
+                .await
+            {
                 Ok(Ok(reply)) => reply,
                 Err(RequestStop::Cancelled) => return AdvisorOutcome::Quiet,
                 Err(RequestStop::TimedOut)

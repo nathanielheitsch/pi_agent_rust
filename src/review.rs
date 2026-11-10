@@ -584,6 +584,15 @@ pub struct ModelReviewer {
     options: crate::provider::StreamOptions,
     privacy: Arc<AuxiliaryPrivacy>,
 }
+/// Provider, stream options, and privacy vault for one model review, all owned.
+/// A review task carries this instead of `&ModelReviewer` so its future is
+/// `Send + 'static` and can be spawned while the UI stays responsive.
+#[derive(Clone)]
+pub struct ReviewHandles {
+    provider: Arc<dyn crate::provider::Provider>,
+    options: crate::provider::StreamOptions,
+    privacy: Arc<AuxiliaryPrivacy>,
+}
 
 struct ReviewUnit {
     file: String,
@@ -761,75 +770,145 @@ impl ModelReviewer {
         request: PreparedReview,
         abort: Option<&crate::agent::AbortSignal>,
     ) -> Result<ReviewReport> {
-        if !Arc::ptr_eq(&request.privacy, &self.privacy) {
-            return Err(Error::validation("PI_REVIEW_PRIVACY: request belongs to a different reviewer"));
-        }
-        let files = request.units.len();
-        let findings = with_timeout_and_abort(REVIEW_TIMEOUT, abort, async {
-            futures::stream::iter(request.units.iter().enumerate())
-                .map(|(index, unit)| self.review_unit(index, unit, &request.system_prompt))
-                .buffer_unordered(REVIEW_CONCURRENCY)
-                .try_collect::<Vec<_>>()
-                .await
-        }).await.map_err(|stop| match stop {
-            RequestStop::Cancelled => Error::validation("PI_REVIEW_CANCELLED: review cancelled"),
-            RequestStop::TimedOut => Error::api("PI_REVIEW_TIMEOUT: review exceeded 120 seconds; no complete verdict"),
-            RequestStop::TimeUnavailable => Error::config("PI_REVIEW_TIME_DENIED: review requires timer authority"),
-        })??;
-        CodeReviewer::finish_report(
-            request.target,
-            files,
-            request.hunks,
-            findings.into_iter().flatten().collect(),
-            &request.options,
-            request.started,
-            format!("model:{}/{}", self.provider.name(), self.provider.model_id()),
-            request.skipped_changes,
-        )
+        Self::review_prepared_owned(self.handles(), request, abort.cloned()).await
     }
 
-    async fn review_unit(
-        &self,
-        index: usize,
-        unit: &ReviewUnit,
-        system_prompt: &str,
-    ) -> Result<Vec<ReviewFinding>> {
-        let context = crate::provider::Context {
-            system_prompt: Some(system_prompt.into()),
-            messages: vec![crate::model::Message::User(crate::model::UserMessage {
-                content: crate::model::UserContent::Text(unit.input.clone()),
-                timestamp: chrono::Utc::now().timestamp_millis(),
-            })].into(),
-            tools: Vec::new().into(),
-        };
-        let request_id = format!("review-{}", uuid::Uuid::new_v4());
-        let options = crate::provider::StreamOptions {
-            max_tokens: Some(4096),
-            session_id: Some(request_id.clone()),
-            prompt_cache_key: Some(request_id),
-            thinking_level: None,
-            thinking_budgets: None,
-            ..self.options.clone()
-        };
-        let stream = self.provider.stream(&context, &options).await?;
-        let text = collect_text(stream, crate::text_completion::MAX_TEXT_BYTES).await?;
-        let response: ModelReviewResponse = serde_json::from_str(&text).map_err(|error| {
-            // Parse diagnostics never include the model's raw response.
-            Error::validation(format!("PI_REVIEW_RESPONSE: unit {} returned invalid review JSON at line {}, column {}", index + 1, error.line(), error.column()))
-        })?;
-        if response.findings.len() > MAX_UNIT_FINDINGS {
-            return Err(Error::validation("PI_REVIEW_RESPONSE: too many findings in one unit"));
+    /// Owned handles for one model review. Every field is `Arc`/owned, so a review can
+    /// be moved into a spawned task without carrying `&ModelReviewer` into its future:
+    /// `Provider::stream` is an `#[async_trait]` method, so a `&self` receiver plus the
+    /// `&Context` borrow yields an opaque future with unnameable lifetimes that cannot
+    /// satisfy `Send + 'static` (rustc#100013). Cancellation and the shared 120s
+    /// deadline behave exactly as the `&self` path.
+    #[must_use]
+    pub fn handles(&self) -> ReviewHandles {
+        ReviewHandles {
+            provider: Arc::clone(&self.provider),
+            options: self.options.clone(),
+            privacy: Arc::clone(&self.privacy),
         }
-        // Model-authored diagnostics are also outbound/report content. Screen
-        // the typed fields before publication without flattening JSON escapes.
-        let protected = crate::text_completion::redact_json_with_vault(
-            &serde_json::to_value(response)?, &self.privacy,
-            &mut crate::secrets::SecretVault::default(),
-        )?;
-        let response: ModelReviewResponse = serde_json::from_value(protected)
-            .map_err(|_| Error::validation("PI_REVIEW_PRIVACY: response projection changed finding shape"))?;
-        validate_model_findings(index, unit, response.findings)
     }
+
+    pub fn review_prepared_owned(
+        handles: ReviewHandles,
+        mut request: PreparedReview,
+        abort: Option<crate::agent::AbortSignal>,
+    ) -> futures::future::BoxFuture<'static, Result<ReviewReport>> {
+        if !Arc::ptr_eq(&request.privacy, &handles.privacy) {
+            let error =
+                Error::validation("PI_REVIEW_PRIVACY: request belongs to a different reviewer");
+            return Box::pin(async move { Err(error) });
+        }
+        // Everything the stream needs is owned before the future is built, so no
+        // borrow of a local or of the reviewer crosses an await point.
+        let files = request.units.len();
+        let model_label = format!(
+            "model:{}/{}",
+            handles.provider.name(),
+            handles.provider.model_id()
+        );
+        let provider = Arc::clone(&handles.provider);
+        let base_options = Arc::new(handles.options);
+        let privacy = Arc::clone(&handles.privacy);
+        let units = std::mem::take(&mut request.units);
+        let system_prompt = Arc::new(std::mem::take(&mut request.system_prompt));
+        Box::pin(async move {
+            let findings = with_timeout_and_abort(REVIEW_TIMEOUT, abort, async move {
+                futures::stream::iter(units.into_iter().enumerate())
+                    .map(move |(index, unit)| {
+                        review_unit(
+                            Arc::clone(&provider),
+                            Arc::clone(&base_options),
+                            Arc::clone(&privacy),
+                            index,
+                            unit,
+                            Arc::clone(&system_prompt),
+                        )
+                    })
+                    .buffer_unordered(REVIEW_CONCURRENCY)
+                    .try_collect::<Vec<_>>()
+                    .await
+            })
+            .await
+            .map_err(|stop| match stop {
+                RequestStop::Cancelled => {
+                    Error::validation("PI_REVIEW_CANCELLED: review cancelled")
+                }
+                RequestStop::TimedOut => Error::api(
+                    "PI_REVIEW_TIMEOUT: review exceeded 120 seconds; no complete verdict",
+                ),
+                RequestStop::TimeUnavailable => {
+                    Error::config("PI_REVIEW_TIME_DENIED: review requires timer authority")
+                }
+            })??;
+            CodeReviewer::finish_report(
+                std::mem::take(&mut request.target),
+                files,
+                request.hunks,
+                findings.into_iter().flatten().collect(),
+                &request.options,
+                request.started,
+                model_label,
+                std::mem::take(&mut request.skipped_changes),
+            )
+        })
+    }
+}
+
+/// One unit's provider request with fully owned inputs, outside the impl so its future
+/// carries no borrowed `&ModelReviewer`. The only borrows it makes are of values the
+/// future itself owns (`provider`, `options`, `context`), which is what keeps the
+/// enclosing review future `Send + 'static` (rustc#100013).
+async fn review_unit(
+    provider: Arc<dyn crate::provider::Provider>,
+    base_options: Arc<crate::provider::StreamOptions>,
+    privacy: Arc<AuxiliaryPrivacy>,
+    index: usize,
+    unit: ReviewUnit,
+    system_prompt: Arc<String>,
+) -> Result<Vec<ReviewFinding>> {
+    let context = crate::provider::Context {
+        system_prompt: Some(system_prompt.as_str().into()),
+        messages: vec![crate::model::Message::User(crate::model::UserMessage {
+            content: crate::model::UserContent::Text(unit.input.clone()),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+        })]
+        .into(),
+        tools: Vec::new().into(),
+    };
+    let request_id = format!("review-{}", uuid::Uuid::new_v4());
+    let options = crate::provider::StreamOptions {
+        max_tokens: Some(4096),
+        session_id: Some(request_id.clone()),
+        prompt_cache_key: Some(request_id),
+        thinking_level: None,
+        thinking_budgets: None,
+        ..base_options.as_ref().clone()
+    };
+    let stream = provider.stream(&context, &options).await?;
+    let text = collect_text(stream, crate::text_completion::MAX_TEXT_BYTES).await?;
+    let response: ModelReviewResponse = serde_json::from_str(&text).map_err(|error| {
+        // Parse diagnostics never include the model's raw response.
+        Error::validation(format!(
+            "PI_REVIEW_RESPONSE: unit {} returned invalid review JSON at line {}, column {}",
+            index + 1,
+            error.line(),
+            error.column()
+        ))
+    })?;
+    if response.findings.len() > MAX_UNIT_FINDINGS {
+        return Err(Error::validation(
+            "PI_REVIEW_RESPONSE: too many findings in one unit",
+        ));
+    }
+    // Model-authored diagnostics are also outbound/report content. Screen
+    // the typed fields before publication without flattening JSON escapes.
+    let protected = crate::text_completion::redact_json_with_vault(
+        &serde_json::to_value(response)?, privacy.as_ref(),
+        &mut crate::secrets::SecretVault::default(),
+    )?;
+    let response: ModelReviewResponse = serde_json::from_value(protected)
+        .map_err(|_| Error::validation("PI_REVIEW_PRIVACY: response projection changed finding shape"))?;
+    validate_model_findings(index, &unit, response.findings)
 }
 
 fn valid_finding_text(text: &str, max: usize) -> bool {

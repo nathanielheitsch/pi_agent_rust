@@ -291,13 +291,24 @@ pub enum PreparedWorkspaceReview {
 }
 
 impl PreparedWorkspaceReview {
+    /// Esc cancellation stays intact: the review runs on the runtime while the UI
+    /// remains responsive, and owning the signal is what lets the review future
+    /// satisfy `Send + 'static` for `spawn` (see `review_prepared_owned`).
     pub async fn run(self, abort: Option<crate::agent::AbortSignal>) -> Report {
         match self {
             Self::Offline(report) => report,
             Self::Model(client, request) => {
-                let _ = (&client, &request, &abort);
-                Report::status("bisect3")
-            },
+                match crate::review::ModelReviewer::review_prepared_owned(
+                    client.handles(),
+                    request,
+                    abort,
+                )
+                .await
+                {
+                    Ok(report) => review_report(report),
+                    Err(error) => Report::status(format!("Review failed: {error}")),
+                }
+            }
         }
     }
 }

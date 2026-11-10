@@ -54,15 +54,19 @@ where
 /// executor context, which must remain alive to persist and finish the turn.
 pub async fn with_timeout_and_abort<F>(
     timeout: Duration,
-    abort: Option<&crate::agent::AbortSignal>,
+    abort: Option<crate::agent::AbortSignal>,
     future: F,
 ) -> std::result::Result<F::Output, RequestStop>
 where
     F: Future,
 {
     let owner = AgentCx::for_current_or_request();
-    let cancelled =
-        || abort.is_some_and(crate::agent::AbortSignal::is_aborted) || owner.checkpoint().is_err();
+    let cancelled = || {
+        abort
+            .as_ref()
+            .is_some_and(crate::agent::AbortSignal::is_aborted)
+            || owner.checkpoint().is_err()
+    };
     if cancelled() {
         return Err(RequestStop::Cancelled);
     }
@@ -135,7 +139,7 @@ mod tests {
         let polled = AtomicBool::new(false);
         let mut request = std::pin::pin!(with_timeout_and_abort(
             Duration::from_secs(30),
-            Some(&signal),
+            Some(signal.clone()),
             async {
                 let _guard = guard;
                 polled.store(true, Ordering::SeqCst);
@@ -162,7 +166,7 @@ mod tests {
         let dropped = Arc::new(AtomicBool::new(false));
         let result = runtime.block_on(with_timeout_and_abort(
             Duration::from_secs(30),
-            Some(&signal),
+            Some(signal.clone()),
             async {
                 handle.abort();
                 OnDrop(Arc::clone(&dropped))
@@ -189,7 +193,7 @@ mod tests {
         let guard = OnDrop(Arc::clone(&dropped));
         let result = runtime.block_on(with_timeout_and_abort(
             Duration::from_secs(5),
-            Some(&signal),
+            Some(signal.clone()),
             async move {
                 let _guard = guard;
                 started_tx.send(()).expect("signal provider admission"); // ubs:ignore[rust.panic.expect] -- The cancellation thread remains alive until admission.
