@@ -265,6 +265,20 @@ pub trait Tool: Send + Sync {
     /// Get the tool description.
     fn description(&self) -> &str;
 
+    /// One-line usage guidance for the system prompt (`promptSnippet` at the
+    /// extension surface). Unlike `description`, which travels in the tool schema,
+    /// this reaches the prompt the way a built-in tool's guidance does — so an
+    /// extension can say *when* to use its tool, not only what it returns.
+    fn prompt_snippet(&self) -> Option<&str> {
+        None
+    }
+
+    /// Usage-guidance bullets for the system prompt (`promptGuidelines` at the
+    /// extension surface). Rendered directly under [`Self::prompt_snippet`].
+    fn prompt_guidelines(&self) -> &[String] {
+        &[]
+    }
+
     /// Get the tool parameters as JSON Schema.
     fn parameters(&self) -> serde_json::Value;
 

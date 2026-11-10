@@ -23,6 +23,49 @@ use asupersync::time::{timeout, wall_now};
 
 const DEFAULT_EXTENSION_TOOL_TIMEOUT_MS: u64 = 60_000;
 
+/// `promptSnippet` for an extension-registered tool, with blank values treated as
+/// absent so an empty string never renders an empty guidance line.
+#[must_use]
+fn extension_prompt_snippet(def: &ExtensionToolDef) -> Option<&str> {
+    def.prompt_snippet
+        .as_deref()
+        .map(str::trim)
+        .filter(|snippet| !snippet.is_empty())
+}
+
+/// `promptGuidelines` for an extension-registered tool.
+#[must_use]
+fn extension_prompt_guidelines(def: &ExtensionToolDef) -> &[String] {
+    def.prompt_guidelines.as_deref().unwrap_or(&[])
+}
+
+/// Extension tool guidance rendered into the system prompt: one entry per tool
+/// that carries a snippet and/or guidelines. Returns empty when no extension
+/// supplies guidance, so sessions without extensions keep a byte-identical prompt.
+#[must_use]
+pub fn extension_tool_guidance<'a>(tools: impl Iterator<Item = &'a dyn Tool>) -> String {
+    let mut guidance = String::new();
+    for tool in tools {
+        if tool.origin() != crate::tools::ToolOrigin::Extension {
+            continue;
+        }
+        let Some(snippet) = tool.prompt_snippet() else {
+            continue;
+        };
+        let _ = std::fmt::Write::write_fmt(
+            &mut guidance,
+            format_args!("\n- {}: {}", tool.name(), snippet),
+        );
+        for bullet in tool.prompt_guidelines() {
+            let bullet = bullet.trim();
+            if !bullet.is_empty() {
+                let _ = std::fmt::Write::write_fmt(&mut guidance, format_args!("\n  - {bullet}"));
+            }
+        }
+    }
+    guidance
+}
+
 /// Wraps a JS extension-registered tool so it can be used as a Rust [`Tool`].
 ///
 /// Note: This wrapper uses [`ExtensionRuntimeHandle`] rather than
@@ -171,6 +214,14 @@ impl Tool for ExtensionToolWrapper {
         &self.def.description
     }
 
+    fn prompt_snippet(&self) -> Option<&str> {
+        extension_prompt_snippet(&self.def)
+    }
+
+    fn prompt_guidelines(&self) -> &[String] {
+        extension_prompt_guidelines(&self.def)
+    }
+
     fn parameters(&self) -> Value {
         self.def.parameters.clone()
     }
@@ -219,6 +270,14 @@ impl Tool for WasmExtensionToolWrapper {
 
     fn description(&self) -> &str {
         &self.def.description
+    }
+
+    fn prompt_snippet(&self) -> Option<&str> {
+        extension_prompt_snippet(&self.def)
+    }
+
+    fn prompt_guidelines(&self) -> &[String] {
+        extension_prompt_guidelines(&self.def)
     }
 
     fn parameters(&self) -> Value {

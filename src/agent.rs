@@ -1861,6 +1861,12 @@ pub struct Agent {
     /// The generation counter covers mid-session `xdev` promotions (bd-cv653.1.6).
     cached_tool_defs: Option<(u64, Vec<ToolDef>)>,
 
+    /// Cached extension tool guidance for the system prompt, keyed by the same
+    /// registry generation as [`Self::cached_tool_defs`]. Holds `promptSnippet`/
+    /// `promptGuidelines` from extension-registered tools so they reach the prompt
+    /// instead of being forwarded and dropped.
+    cached_tool_guidance: Option<(u64, String)>,
+
     /// Path-scoped imported workspace rules (bd-cv653.6.2), delivered as
     /// steering messages the first time a tool call touches a matching path.
     scoped_rules: Option<ScopedRuleState>,
@@ -2067,6 +2073,7 @@ impl Agent {
             job_session_scope,
             message_queue: MessageQueue::new(QueueMode::OneAtATime, QueueMode::OneAtATime),
             cached_tool_defs: None,
+            cached_tool_guidance: None,
             scoped_rules: None,
             stream_rules: Vec::new(),
             stream_rule_source: None,
@@ -2763,17 +2770,32 @@ impl Agent {
                 .map(|set| set.clone())
                 .unwrap_or_default();
             let registry = self.tools.snapshot();
+            let visible = |tool: &Arc<dyn Tool>| {
+                !registry.is_discoverable(tool.name()) || promoted.contains(tool.name())
+            };
             let defs: Vec<ToolDef> = registry
                 .tools()
                 .iter()
-                .filter(|t| !registry.is_discoverable(t.name()) || promoted.contains(t.name()))
-                .map(|t| ToolDef {
-                    name: t.name().to_string(),
-                    description: t.description().to_string(),
-                    parameters: t.parameters(),
+                .filter(|tool| visible(tool))
+                .map(|tool| ToolDef {
+                    name: tool.name().to_string(),
+                    description: tool.description().to_string(),
+                    parameters: tool.parameters(),
                 })
                 .collect();
+            // Extension tools carry `promptSnippet`/`promptGuidelines` that the tool
+            // schema cannot express (when to use the tool, not what it returns). Only
+            // tools that actually reach the schema contribute, so guidance never
+            // advertises an unpromoted discoverable tool.
+            let guidance = crate::extension_tools::extension_tool_guidance(
+                registry
+                    .tools()
+                    .iter()
+                    .filter(|tool| visible(tool))
+                    .map(Arc::as_ref),
+            );
             self.cached_tool_defs = Some((generation, defs));
+            self.cached_tool_guidance = Some((generation, guidance));
         }
         let tools = Cow::Borrowed(
             self.cached_tool_defs
@@ -2786,6 +2808,19 @@ impl Agent {
         if self.prewalk_budget.is_some() && self.prewalk.is_some() {
             let mut prompt = self.config.system_prompt.clone().unwrap_or_default();
             prompt.push_str("\n\n## Prewalk\nInvestigate the request and plan the implementation before making changes. If the todo tool is available, record a concrete todo list before editing project files. Begin the first real implementation change; the session will automatically hand off after that completed tool batch. Do not stop to announce or request the handoff. For discussion or read-only requests, answer normally without making an artificial edit.");
+            system_prompt = Some(Cow::Owned(prompt));
+        }
+        // Guidance appends to an existing prompt only: a session that deliberately
+        // has no system prompt must not acquire one because an extension is mounted.
+        if let Some((_, guidance)) = self.cached_tool_guidance.as_ref()
+            && !guidance.is_empty()
+            && let Some(base) = system_prompt.as_deref()
+        {
+            let mut prompt = base.to_string();
+            prompt.push_str(
+                "\n\n# Extension Tool Guidance\n\nUsage guidance for extension-registered tools:\n",
+            );
+            prompt.push_str(guidance);
             system_prompt = Some(Cow::Owned(prompt));
         }
         Context {
