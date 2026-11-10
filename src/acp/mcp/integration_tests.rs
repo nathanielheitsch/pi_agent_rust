@@ -359,7 +359,7 @@ fn live_state(
         crate::mcp::config::parse_acp_servers(&json!({"mcpServers":server.config()}), cwd)
             .unwrap()
             .unwrap();
-    let mcp = prepare(cwd, root, servers).unwrap();
+    let mcp = prepare(cwd, root, servers, None).unwrap();
     mount(&mut agent_session, &mcp);
     let state = Arc::new(Mutex::new(AcpSessionState {
         agent_session: Some(crate::sdk::AgentSessionHandle::from_session_with_listeners(

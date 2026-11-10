@@ -123,12 +123,14 @@ fn setup_timeout() -> Error {
 
 impl McpManager {
     pub(super) async fn ensure_ready(&self, entry: &Arc<ServerEntry>) -> Result<()> {
-        self.ensure_ready_owned(entry, entry.timeout(), true).await
+        self.ensure_ready_owned(entry, self.timeout_for(entry), true)
+            .await
     }
 
     /// Startup, trust, test, and recovery already hold this connection's lane.
     pub(super) async fn ensure_ready_in_lane(&self, entry: &Arc<ServerEntry>) -> Result<()> {
-        self.ensure_ready_owned(entry, entry.timeout(), false).await
+        self.ensure_ready_owned(entry, self.timeout_for(entry), false)
+            .await
     }
 
     async fn ensure_ready_owned(

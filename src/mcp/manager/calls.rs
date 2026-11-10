@@ -434,7 +434,7 @@ impl McpManager {
         owner
             .with_current(async {
                 let entry = self.entry(server)?;
-                let timeout = entry.timeout();
+                let timeout = self.timeout_for(&entry);
                 let (transport, contract) = self
                     .prepare_tool_call(&owner, &entry, tool, timeout)
                     .await?;

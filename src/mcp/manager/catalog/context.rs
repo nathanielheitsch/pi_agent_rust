@@ -500,7 +500,8 @@ impl McpManager {
     ) -> Result<Value> {
         let owner = crate::agent_cx::AgentCx::for_current_or_request();
         super::check_request_owner(&owner)?;
-        let timeout = self.entry(server)?.timeout();
+        let entry = self.entry(server)?;
+        let timeout = self.timeout_for(&entry);
         owner
             .with_current(self.request_context_with_timeout(server, method, params, shape, timeout))
             .await

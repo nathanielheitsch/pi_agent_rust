@@ -4032,7 +4032,7 @@ pub(crate) async fn create_agent_session_deferred_mcp(
             &global_dir,
             &mcp.config_paths,
             options.workspace_trusted,
-        )?);
+        )?.with_default_timeout(config.mcp_default_timeout_ms()));
         if let Some(extension_manager) = agent_session
             .extensions
             .as_ref()

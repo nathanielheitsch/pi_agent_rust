@@ -1921,7 +1921,12 @@ fn handle_session_new(
         options,
         permission_client,
     )?;
-    let mcp_state = mcp::prepare(&cwd, &Config::global_dir(), servers);
+    let mcp_state = mcp::prepare(
+        &cwd,
+        &Config::global_dir(),
+        servers,
+        options.config.mcp_default_timeout_ms(),
+    );
     if let (Some(agent), Some(mcp_state)) = (state.agent_session.as_mut(), mcp_state.as_ref()) {
         mcp::mount(agent.session_mut(), mcp_state);
     }

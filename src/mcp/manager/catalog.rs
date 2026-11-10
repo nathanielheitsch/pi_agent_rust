@@ -328,7 +328,8 @@ impl McpManager {
     /// Returns trust, capability, cancellation, timeout, restart-budget or
     /// protocol errors. A failed traversal never returns a partial catalog.
     pub async fn refresh_tools(&self, server: &str) -> Result<Vec<McpToolMeta>> {
-        let timeout = self.entry(server)?.timeout();
+        let entry = self.entry(server)?;
+        let timeout = self.timeout_for(&entry);
         self.refresh_tools_with_timeout(server, timeout).await
     }
 
@@ -352,7 +353,7 @@ impl McpManager {
         entry: &Arc<ServerEntry>,
         transport: &Arc<dyn McpTransport>,
     ) -> Result<Vec<McpToolMeta>> {
-        self.collect_tool_catalog_with_timeout(entry, transport, entry.timeout())
+        self.collect_tool_catalog_with_timeout(entry, transport, self.timeout_for(entry))
             .await
     }
 

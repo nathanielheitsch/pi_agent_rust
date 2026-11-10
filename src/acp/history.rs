@@ -234,6 +234,7 @@ pub(super) async fn load(
             &cwd,
             &crate::config::Config::global_dir(),
             supplied.unwrap_or_default(),
+            options.config.mcp_default_timeout_ms(),
         );
         if let (Some(agent), Some(mcp_state)) = (state.agent_session.as_mut(), mcp_state.as_ref()) {
             super::mcp::mount(agent.session_mut(), mcp_state);

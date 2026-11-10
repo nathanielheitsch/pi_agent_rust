@@ -122,6 +122,7 @@ pub(super) fn prepare(
     cwd: &Path,
     global_dir: &Path,
     servers: Vec<ConfiguredServer>,
+    default_timeout_ms: Option<u64>,
 ) -> Option<Arc<SessionMcp>> {
     if servers.is_empty() {
         return None;
@@ -139,14 +140,17 @@ pub(super) fn prepare(
         (server.name.clone(), description)
     }).collect();
     Some(Arc::new(SessionMcp {
-        manager: Arc::new(McpManager::new(
-            cwd,
-            global_dir,
-            McpDiscovery {
-                servers,
-                warnings: Vec::new(),
-            },
-        )),
+        manager: Arc::new(
+            McpManager::new(
+                cwd,
+                global_dir,
+                McpDiscovery {
+                    servers,
+                    warnings: Vec::new(),
+                },
+            )
+            .with_default_timeout(default_timeout_ms),
+        ),
         signatures,
         descriptions,
         started: AtomicBool::new(false),
@@ -737,7 +741,7 @@ mod tests {
                 let servers = crate::mcp::config::parse_acp_servers(&json!({"mcpServers":[{
                     "type":"http", "name":"remote", "url":format!("{}/mcp", server.url),
                 }]}), root.path()).unwrap().unwrap();
-                let mcp = prepare(root.path(), root.path(), servers).unwrap();
+                let mcp = prepare(root.path(), root.path(), servers, None).unwrap();
                 let mut entry = crate::models::ad_hoc_model_entry("openai", "gpt-4o").unwrap();
                 entry.model.api = "openai-completions".into();
                 entry.model.base_url = format!("{}/v1", server.url);
@@ -982,7 +986,7 @@ mod tests {
     fn setup_is_inert_isolated_and_does_not_create_a_trust_record() {
         let root = tempfile::tempdir().unwrap();
         let global = root.path().join("global");
-        let state = prepare(root.path(), &global, http_servers(root.path())).unwrap();
+        let state = prepare(root.path(), &global, http_servers(root.path()), None).unwrap();
         assert_eq!(state.manager.list()[0].trust, "pending");
         assert_eq!(state.manager.list()[0].tools, 0);
         assert!(!state.started.load(Ordering::Acquire));
@@ -1000,7 +1004,7 @@ mod tests {
     fn live_reattach_preserves_existing_authority_and_rejects_replacement() {
         let root = tempfile::tempdir().unwrap();
         let mut servers = http_servers(root.path());
-        let state = prepare(root.path(), root.path(), servers.clone()).unwrap();
+        let state = prepare(root.path(), root.path(), servers.clone(), None).unwrap();
         check_reattach(Some(&state), None, root.path()).unwrap();
         check_reattach(Some(&state), Some(&servers), root.path()).unwrap();
         assert!(check_reattach(Some(&state), Some(&[]), root.path()).is_err());
@@ -1026,7 +1030,7 @@ mod tests {
     #[test]
     fn operator_inspection_never_exposes_connection_secrets() {
         let root = tempfile::tempdir().unwrap();
-        let state = prepare(root.path(), root.path(), http_servers(root.path())).unwrap();
+        let state = prepare(root.path(), root.path(), http_servers(root.path()), None).unwrap();
         let text = runtime().block_on(execute(&state, Command::Inspect("remote".into())));
         assert!(text.contains("HTTP"));
         assert!(text.contains("1 headers"));

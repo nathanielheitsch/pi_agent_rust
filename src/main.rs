@@ -2810,7 +2810,7 @@ async fn run(
             &pi::config::Config::global_dir(),
             &cli.mcp_config,
             workspace_trusted,
-        )?))
+        )?.with_default_timeout(config.mcp_default_timeout_ms())))
     };
     let mut extension_bindings = Vec::new();
     let mut extension_model_entries = Vec::new();

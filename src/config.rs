@@ -1128,6 +1128,15 @@ impl Config {
             .unwrap_or(false)
     }
 
+    /// Settings-side MCP fallback timeout (`mcp.default_timeout_ms`), if supplied.
+    /// A per-server `mcp.json` `timeout` still wins; this is the gap-filler for
+    /// servers that declare none. Four construction sites need it, so the option
+    /// chain lives here rather than being repeated at each call site.
+    #[must_use]
+    pub fn mcp_default_timeout_ms(&self) -> Option<u64> {
+        self.mcp.as_ref().and_then(|mcp| mcp.default_timeout_ms)
+    }
+
     /// Active tool approval mode (bd-cv653.3.19). Default: `always-ask`.
     #[must_use]
     pub fn approval_mode(&self) -> crate::approval::ApprovalMode {

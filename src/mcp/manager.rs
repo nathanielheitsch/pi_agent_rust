@@ -260,12 +260,6 @@ impl ServerEntry {
             .unwrap_or_else(|| self.config.effective_cwd(manager_default))
     }
 
-    fn timeout(&self) -> Duration {
-        self.config
-            .timeout_ms
-            .map_or(DEFAULT_MCP_TIMEOUT, Duration::from_millis)
-    }
-
     fn check_enabled(&self) -> Result<()> {
         if self.config.enabled {
             Ok(())
@@ -365,6 +359,10 @@ struct McpManagerInner {
     trust_lock: Mutex<()>,
     shutting_down: AtomicBool,
     warnings: Vec<super::config::ConfigWarning>,
+    /// Settings-side fallback (`mcp.default_timeout_ms`) for entries that carry no
+    /// per-server `timeout`. `OnceLock` so a cloned manager shares one decision and
+    /// the first install wins rather than racing a later override.
+    default_timeout: std::sync::OnceLock<Duration>,
     #[cfg(test)]
     transport_factory: Mutex<Option<Arc<TestTransportFactory>>>,
     #[cfg(test)]
@@ -372,9 +370,44 @@ struct McpManagerInner {
 }
 
 impl McpManager {
-    /// Build from discovery (no connections yet).
+    /// Build from discovery (no connections yet). A server entry without its own
+    /// `timeout` uses the compiled-in [`DEFAULT_MCP_TIMEOUT`] until a settings
+    /// fallback is installed with [`Self::with_default_timeout`].
     #[must_use]
     pub fn new(cwd: &Path, global_dir: &Path, discovery: McpDiscovery) -> Self {
+        Self::with_timeout_source(cwd, global_dir, discovery)
+    }
+
+    /// Install the settings-side fallback (`mcp.default_timeout_ms`). A per-server
+    /// `timeout` still wins; this only fills the gap where an entry omits one.
+    /// `Config`'s merge already clamps the value, so no zero or unbounded timeout can
+    /// reach a request. The first install wins, which keeps a cloned manager and its
+    /// clones agreeing on one fallback.
+    #[must_use]
+    pub fn with_default_timeout(self, default_timeout_ms: Option<u64>) -> Self {
+        if let Some(timeout_ms) = default_timeout_ms {
+            self.inner
+                .default_timeout
+                .set(Duration::from_millis(timeout_ms))
+                .ok();
+        }
+        self
+    }
+
+    /// One entry's per-operation timeout: the entry's own value, else the installed
+    /// settings fallback, else the compiled-in default.
+    #[must_use]
+    fn timeout_for(&self, entry: &ServerEntry) -> Duration {
+        entry
+            .config
+            .timeout_ms
+            .map(Duration::from_millis)
+            .or(self.inner.default_timeout.get().copied())
+            .unwrap_or(DEFAULT_MCP_TIMEOUT)
+    }
+
+    #[must_use]
+    fn with_timeout_source(cwd: &Path, global_dir: &Path, discovery: McpDiscovery) -> Self {
         let servers = discovery
             .servers
             .into_iter()
@@ -399,6 +432,7 @@ impl McpManager {
                 trust_lock: Mutex::new(()),
                 shutting_down: AtomicBool::new(false),
                 warnings: discovery.warnings,
+                default_timeout: std::sync::OnceLock::new(),
                 #[cfg(test)]
                 transport_factory: Mutex::new(None),
                 #[cfg(test)]
@@ -1073,7 +1107,7 @@ impl McpManager {
                         "version": crate::platform::VERSION,
                     },
                 }),
-                entry.timeout(),
+                self.timeout_for(entry),
             )
             .await
         {
@@ -2354,6 +2388,64 @@ mod tests {
         let entry = manager.entry("fixture").expect("fixture entry");
         acknowledge_test_stdio_server(&manager, &entry);
         (manager, entry)
+    }
+
+    /// The `mcp.default_timeout_ms` settings slot must reach the request path, not
+    /// merely survive a config merge. Precedence: entry `timeout` > settings
+    /// fallback > compiled-in default, and a cloned manager shares the fallback.
+    #[test]
+    fn settings_timeout_fallback_wins_over_compiled_default_per_entry() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cwd = temp.path().join("project");
+        let global = temp.path().join("global");
+        std::fs::create_dir_all(&cwd).expect("project directory");
+        std::fs::create_dir_all(&global).expect("global directory");
+        let servers = |name: &str, timeout_ms: Option<u64>| McpDiscovery {
+            servers: vec![ConfiguredServer {
+                name: name.to_string(),
+                command: Some("server".to_string()),
+                args: Vec::new(),
+                env: Vec::new(),
+                url: None,
+                headers: Vec::new(),
+                transport_hint: Some("stdio".to_string()),
+                enabled: true,
+                cwd: None,
+                timeout_ms,
+                provenance: Provenance::ProjectPi,
+                source_file: cwd.join(".pi/mcp.json"),
+            }],
+            warnings: Vec::new(),
+        };
+        let manager = McpManager::new(&cwd, &global, servers("plain", None))
+            .with_default_timeout(Some(45_000));
+        assert_eq!(
+            manager.timeout_for(&manager.entry("plain").expect("plain entry")),
+            Duration::from_millis(45_000),
+            "the settings fallback must replace the compiled-in default"
+        );
+        // A per-server timeout still wins.
+        let pinned = McpManager::new(&cwd, &global, servers("pinned", Some(7_500)))
+            .with_default_timeout(Some(45_000));
+        assert_eq!(
+            pinned.timeout_for(&pinned.entry("pinned").expect("pinned entry")),
+            Duration::from_millis(7_500)
+        );
+        // Clones share the installed fallback through the shared inner Arc, so the
+        // fallback is installed once rather than per handle.
+        let shared = Arc::new(
+            McpManager::new(&cwd, &global, servers("plain", None)).with_default_timeout(Some(45_000)),
+        );
+        assert_eq!(
+            shared.timeout_for(&shared.entry("plain").expect("plain entry")),
+            Duration::from_millis(45_000)
+        );
+        // No settings slot at all keeps the compiled-in default.
+        let unset = McpManager::new(&cwd, &global, servers("plain", None));
+        assert_eq!(
+            unset.timeout_for(&unset.entry("plain").expect("plain entry")),
+            DEFAULT_MCP_TIMEOUT
+        );
     }
 
     #[test]
