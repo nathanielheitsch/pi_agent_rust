@@ -3504,6 +3504,20 @@ pub(crate) fn hashline_length_from_config(config: Option<&Config>) -> u8 {
         .unwrap_or(HASHLINE_MIN_TAG_WIDTH)
         .clamp(HASHLINE_MIN_TAG_WIDTH, HASHLINE_MAX_TAG_WIDTH)
 }
+/// Effective `hashline.grep` from the settings slot (default `false`, matching
+/// the TS `grep = false` default). When true, `read` and `grep` emit `LINE#HASH`
+/// tags for every line or match without the model asking for `hashline`.
+///
+/// `hashline.replace_text` is deliberately NOT read here: the `replace_text` op
+/// does not exist in the hashline apply core yet, so an accessor for it would be
+/// a settings slot nobody consumes. The field stays in `HashlineSettings` (it
+/// round-trips and merges) until the op lands.
+pub(crate) fn hashline_grep_from_config(config: Option<&Config>) -> bool {
+    config
+        .and_then(|config| config.hashline.as_ref())
+        .and_then(|hashline| hashline.grep)
+        .unwrap_or(false)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecursiveScanAccess {
@@ -5807,6 +5821,10 @@ impl ToolRegistry {
         let block_images = config
             .and_then(|c| c.images.as_ref().and_then(|i| i.block_images))
             .unwrap_or(false);
+        // pi-hashline-edit parity: `hashline.grep` turns LINE#HASH anchoring on by
+        // default for read and grep, and `hashline.replace_text` publishes the
+        // replace_text op on hashline_edit (default true, as in hashline.json).
+        let hashline_grep = hashline_grep_from_config(config);
 
         for name in enabled {
             match *name {
@@ -5818,6 +5836,7 @@ impl ToolRegistry {
                                 .and_then(|r| r.url_allow_private_targets)
                                 .unwrap_or(false),
                         )
+                        .with_hashline_default(hashline_grep)
                         .with_workspace(workspace.clone()),
                 )),
                 "bash" => tools.push(Box::new(
@@ -5842,6 +5861,7 @@ impl ToolRegistry {
                                 .and_then(|r| r.url_allow_private_targets)
                                 .unwrap_or(false),
                         )
+                        .with_hashline_default(hashline_grep)
                         .with_workspace(workspace.clone()),
                 )),
                 "find" => tools.push(Box::new(
@@ -6512,8 +6532,10 @@ struct ReadInput {
     path: String,
     offset: Option<i64>,
     limit: Option<i64>,
+    /// Emit `LINE#HASH` tags on every line. `None` (field absent) falls back to
+    /// the `hashline.grep` settings slot; an explicit `true`/`false` always wins.
     #[serde(default)]
-    hashline: bool,
+    hashline: Option<bool>,
     #[serde(default)]
     raw: bool,
 }
@@ -6527,6 +6549,9 @@ pub struct ReadTool {
     /// SSRF override for URL reads (bd-cv653.2.2): allow private/loopback
     /// targets (from `read.urlAllowPrivateTargets`).
     allow_private_urls: bool,
+    /// Effective `hashline` for a call that omits the parameter, from the
+    /// `hashline.grep` settings slot. A per-call `hashline` still wins.
+    hashline_default: bool,
     workspace: WorkspaceHandle,
     #[cfg(test)]
     after_open_hook: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -6541,6 +6566,7 @@ impl ReadTool {
             block_images: false,
             artifact_root: None,
             allow_private_urls: false,
+            hashline_default: false,
             #[cfg(test)]
             after_open_hook: None,
         }
@@ -6561,6 +6587,7 @@ impl ReadTool {
             block_images,
             artifact_root: None,
             allow_private_urls: false,
+            hashline_default: false,
             #[cfg(test)]
             after_open_hook: None,
         }
@@ -6573,6 +6600,23 @@ impl ReadTool {
         self
     }
 
+    /// Default `hashline` for reads that omit the parameter (settings:
+    /// `hashline.grep`). Full parity with pi-hashline-edit's `hashline.json`
+    /// `grep` key: that extension overrides `read` to anchor every line by
+    /// default, and a per-call `hashline` still takes precedence here.
+    #[must_use]
+    pub const fn with_hashline_default(mut self, hashline_default: bool) -> Self {
+        self.hashline_default = hashline_default;
+        self
+    }
+
+    /// Effective `hashline` anchoring for this call: an explicit per-call value
+    /// always wins, otherwise the `hashline.grep` settings default applies.
+    #[must_use]
+    fn hashline_effective(&self, input: &ReadInput) -> bool {
+        input.hashline.unwrap_or(self.hashline_default)
+    }
+
     #[cfg(test)]
     fn with_artifact_root(cwd: &Path, artifact_root: &Path) -> Self {
         Self {
@@ -6582,6 +6626,7 @@ impl ReadTool {
             block_images: false,
             artifact_root: Some(artifact_root.to_path_buf()),
             allow_private_urls: false,
+            hashline_default: false,
             after_open_hook: None,
         }
     }
@@ -6598,6 +6643,7 @@ impl ReadTool {
             block_images: false,
             artifact_root: None,
             allow_private_urls: false,
+            hashline_default: false,
             after_open_hook: Some(Arc::new(after_open_hook)),
         }
     }
@@ -6628,7 +6674,7 @@ impl ReadTool {
         input: &ReadInput,
         request: structured_json::QueryRequest,
     ) -> Result<ToolOutput> {
-        if input.hashline {
+        if self.hashline_effective(input) {
             return Err(Error::tool(
                 "read",
                 "[JSON_QUERY_HASHLINE] Query results are not source edit anchors; read the source path without q for hashline edits",
@@ -6745,7 +6791,7 @@ impl ReadTool {
             }
             let line = line.strip_suffix('\r').unwrap_or(line);
             let line_idx = start_line + i;
-            if input.hashline {
+            if self.hashline_effective(input) {
                 let tag = format_hashline_tag(line_idx, line);
                 let _ = write!(selected_content, "{tag}:{line}");
             } else {
@@ -6801,7 +6847,7 @@ impl ReadTool {
         } else {
             crate::url_read::UrlReadMode::Reader
         };
-        if input.hashline && mode == crate::url_read::UrlReadMode::Reader {
+        if self.hashline_effective(input) && mode == crate::url_read::UrlReadMode::Reader {
             return Err(Error::tool(
                 "read",
                 "[DOCUMENT_HASHLINE] Rendered URL lines are not source edit locations; save source text locally before using hashline edits",
@@ -7059,7 +7105,7 @@ impl Tool for ReadTool {
         // WAL commits can change results without modifying the main file.
         // Query the admitted immutable snapshot before the ordinary file cache.
         if !input.raw && archive_path.is_none() && sqlite_magic {
-            if input.hashline {
+            if self.hashline_effective(&input) {
                 return Err(Error::tool(
                     "read",
                     "[SQLITE_HASHLINE] Database rows are read-only projections, not source edit anchors",
@@ -7095,7 +7141,7 @@ impl Tool for ReadTool {
         }
 
         if let Some(archive) = archive_path {
-            if input.hashline {
+            if self.hashline_effective(&input) {
                 return Err(Error::tool(
                     "read",
                     "[ARCHIVE_HASHLINE] Archive members are read-only views and cannot provide source edit anchors",
@@ -7288,7 +7334,7 @@ impl Tool for ReadTool {
             })
         };
         if let Some(document_mime) = document_mime {
-            if input.hashline {
+            if self.hashline_effective(&input) {
                 return Err(Error::tool(
                     "read",
                     "[DOCUMENT_HASHLINE] Rendered document lines are not source edit locations; use raw=true with hashline=true to read the original source",
@@ -7526,7 +7572,7 @@ impl Tool for ReadTool {
             }
             let line_idx = start_line + i; // 0-indexed
             let line = line.strip_suffix('\r').unwrap_or(line);
-            if input.hashline {
+            if self.hashline_effective(&input) {
                 let tag = format_hashline_tag(line_idx, line);
                 let _ = write!(selected_content, "{tag}:{line}");
             } else {
@@ -12385,8 +12431,10 @@ struct GrepInput {
     literal: Option<bool>,
     context: Option<usize>,
     limit: Option<usize>,
+    /// Emit `LINE#HASH` tags on every match. `None` (field absent) falls back to
+    /// the `hashline.grep` settings slot; an explicit `true`/`false` always wins.
     #[serde(default)]
-    hashline: bool,
+    hashline: Option<bool>,
 }
 
 const MAX_GREP_RESOURCE_PATHS: usize = 16;
@@ -12440,6 +12488,9 @@ pub struct GrepTool {
     artifact_root: Option<PathBuf>,
     backend: SearchBackend,
     allow_private_urls: bool,
+    /// Effective `hashline` for a call that omits the parameter, from the
+    /// `hashline.grep` settings slot. A per-call `hashline` still wins.
+    hashline_default: bool,
     workspace: WorkspaceHandle,
     #[cfg(test)]
     after_scope_hook: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -12464,12 +12515,31 @@ impl GrepTool {
         self
     }
 
+    /// Default `hashline` for searches that omit the parameter (settings:
+    /// `hashline.grep`). Full parity with pi-hashline-edit: its `hashline.json`
+    /// `grep` key installs a grep override that tags every match, so the setting
+    /// alone makes anchors available without the model asking. A per-call
+    /// `hashline` still takes precedence.
+    #[must_use]
+    pub const fn with_hashline_default(mut self, hashline_default: bool) -> Self {
+        self.hashline_default = hashline_default;
+        self
+    }
+
+    /// Effective `hashline` tagging for this call: an explicit per-call value
+    /// always wins, otherwise the `hashline.grep` settings default applies.
+    #[must_use]
+    fn hashline_effective(&self, input: &GrepInput) -> bool {
+        input.hashline.unwrap_or(self.hashline_default)
+    }
+
     pub(crate) fn with_backend(cwd: &Path, backend: SearchBackend) -> Self {
         Self {
             cwd: cwd.to_path_buf(),
             artifact_root: None,
             backend,
             allow_private_urls: false,
+            hashline_default: false,
             workspace: WorkspaceHandle::default(),
             #[cfg(test)]
             after_scope_hook: None,
@@ -12483,6 +12553,7 @@ impl GrepTool {
             artifact_root: Some(artifact_root.to_path_buf()),
             backend: SearchBackend::default(),
             allow_private_urls: false,
+            hashline_default: false,
             workspace: WorkspaceHandle::default(),
             after_scope_hook: None,
         }
@@ -12498,6 +12569,7 @@ impl GrepTool {
             artifact_root: None,
             backend: SearchBackend::default(),
             allow_private_urls: false,
+            hashline_default: false,
             workspace: WorkspaceHandle::default(),
             after_scope_hook: Some(Arc::new(after_scope_hook)),
         }
@@ -12586,7 +12658,7 @@ impl GrepTool {
         input: &GrepInput,
         paths: &[&str],
     ) -> Result<ToolOutput> {
-        if input.hashline {
+        if self.hashline_effective(input) {
             return Err(Error::tool(
                 "grep",
                 "[DOCUMENT_HASHLINE] Virtual document lines are search locations, not source edit anchors; save source text locally before using hashline edits",
@@ -14000,7 +14072,7 @@ impl Tool for GrepTool {
                         lines_truncated = true;
                     }
 
-                    if input.hashline {
+                    if self.hashline_effective(&input) {
                         let line_idx = current - 1; // 0-indexed for hashline
                         let tag = format_hashline_tag(line_idx, &sanitized);
                         let line = if match_lines.binary_search(&current).is_ok() {
@@ -25513,6 +25585,100 @@ mod host_picker_registry_tests {
             let message = error.to_string();
             assert!(message.contains("not approved"), "{message}");
             assert!(!message.contains("no approval handler"), "{message}");
+        });
+    }
+
+    /// `hashline.grep` is a settings default, not only a per-call flag: with the
+    /// slot on, a registry-built `read`/`grep` emits `LINE#HASH` tags without the
+    /// model asking, and an explicit per-call `hashline: false` still overrides it.
+    /// Without the slot, output stays untagged, which is the pre-existing contract.
+    ///
+    /// Each assertion uses its own directory: the tool-output cache keys on
+    /// `tool\0cwd\0input`, so a shared directory would return the first call's
+    /// formatting for every later one and prove nothing about the setting.
+    #[test]
+    fn hashline_grep_setting_tags_read_and_grep_without_a_per_call_flag() {
+        asupersync::test_utils::run_test(|| async {
+            let text_of = |output: &ToolOutput| -> String {
+                output
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::Text(text) => Some(text.text.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            let off: Config = serde_json::from_value(serde_json::json!({})).unwrap();
+            let on: Config = serde_json::from_value(serde_json::json!({
+                "hashline": { "grep": true }
+            }))
+            .unwrap();
+
+            // Held alive until the assertions finish; each owns its own file.
+            let dir_off = tempfile::tempdir().unwrap();
+            let dir_on = tempfile::tempdir().unwrap();
+            let dir_explicit = tempfile::tempdir().unwrap();
+            let dir_grep_off = tempfile::tempdir().unwrap();
+            let dir_grep_on = tempfile::tempdir().unwrap();
+            for dir in [
+                &dir_off,
+                &dir_on,
+                &dir_explicit,
+                &dir_grep_off,
+                &dir_grep_on,
+            ] {
+                std::fs::write(dir.path().join("src.txt"), "first\nsecond\n").unwrap();
+            }
+
+            let registry_off = ToolRegistry::new(&["read"], dir_off.path(), Some(&off));
+            let registry_on = ToolRegistry::new(&["read"], dir_on.path(), Some(&on));
+            let read_off = registry_off
+                .get("read")
+                .unwrap()
+                .execute("t", serde_json::json!({ "path": "src.txt" }), None)
+                .await
+                .unwrap();
+            let read_on = registry_on
+                .get("read")
+                .unwrap()
+                .execute("t", serde_json::json!({ "path": "src.txt" }), None)
+                .await
+                .unwrap();
+
+            let off_text = text_of(&read_off);
+            let on_text = text_of(&read_on);
+            assert!(!off_text.contains('#'), "untagged default: {off_text}");
+            assert!(on_text.contains("1#"), "setting must tag: {on_text}");
+
+            // A per-call value wins over the settings default.
+            let explicit_off = ToolRegistry::new(&["read"], dir_explicit.path(), Some(&on))
+                .get("read")
+                .unwrap()
+                .execute(
+                    "t",
+                    serde_json::json!({ "path": "src.txt", "hashline": false }),
+                    None,
+                )
+                .await
+                .unwrap();
+            assert!(!text_of(&explicit_off).contains('#'));
+
+            let grep_off = ToolRegistry::new(&["grep"], dir_grep_off.path(), Some(&off))
+                .get("grep")
+                .unwrap()
+                .execute("t", serde_json::json!({ "pattern": "second" }), None)
+                .await
+                .unwrap();
+            let grep_on = ToolRegistry::new(&["grep"], dir_grep_on.path(), Some(&on))
+                .get("grep")
+                .unwrap()
+                .execute("t", serde_json::json!({ "pattern": "second" }), None)
+                .await
+                .unwrap();
+            assert!(!text_of(&grep_off).contains('#'));
+            assert!(text_of(&grep_on).contains("2#"));
         });
     }
 }
