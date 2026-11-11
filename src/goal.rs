@@ -26,9 +26,9 @@ pub use driver::{GoalControl, GoalDecision, GoalRun, GoalRunReport, GoalRunStop,
 pub(crate) use rpc::{rpc_goal_command, rpc_goal_state};
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod budget_tests;
+#[cfg(test)]
+mod tests;
 
 const CHECKPOINT_TYPE: &str = "goal_checkpoint";
 const SCHEMA: &str = "pi.goal.checkpoint.v1";
@@ -173,7 +173,9 @@ impl GoalSnapshot {
     }
 
     pub const fn remaining_tokens(&self) -> u64 {
-        self.record.token_budget.saturating_sub(self.record.tokens_spent)
+        self.record
+            .token_budget
+            .saturating_sub(self.record.tokens_spent)
     }
 
     /// True when the saved intent has no settled result. Explicit resume or
@@ -279,7 +281,8 @@ fn usage_tokens(usage: &Usage) -> u64 {
     // Providers normalize cache buckets differently. Count the larger of the
     // supplied total and the component sum instead of trusting a missing total.
     usage.total_tokens.max(
-        usage.input
+        usage
+            .input
             .saturating_add(usage.output)
             .saturating_add(usage.cache_read)
             .saturating_add(usage.cache_write),
@@ -423,10 +426,18 @@ fn transition(mut record: Record, action: Transition<'_>) -> Result<Record> {
             budget.validate()?;
             validate_text(reason, "budget revision reason")?;
             if budget.max_prompts < record.prompts_started {
-                return Err(failure("GOAL_BUDGET", "prompt total cannot be less than already started prompts"));
+                return Err(failure(
+                    "GOAL_BUDGET",
+                    "prompt total cannot be less than already started prompts",
+                ));
             }
-            if budget.max_prompts == record.max_prompts && budget.token_budget == record.token_budget {
-                return Err(failure("GOAL_BUDGET", "the proposed total budget is unchanged"));
+            if budget.max_prompts == record.max_prompts
+                && budget.token_budget == record.token_budget
+            {
+                return Err(failure(
+                    "GOAL_BUDGET",
+                    "the proposed total budget is unchanged",
+                ));
             }
             record.max_prompts = budget.max_prompts;
             record.token_budget = budget.token_budget;

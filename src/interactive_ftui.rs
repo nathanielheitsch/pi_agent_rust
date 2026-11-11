@@ -3024,7 +3024,8 @@ impl PiFtuiModel {
             PiMsg::SessionSystemNote {
                 owner_session_id,
                 message,
-            } | PiMsg::ReviewFinished {
+            }
+            | PiMsg::ReviewFinished {
                 owner_session_id,
                 message,
                 ..

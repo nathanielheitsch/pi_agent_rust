@@ -5719,8 +5719,7 @@ async fn preserve_terminal_rpc_state(
                 &timestamp,
                 bound_parent_id.as_deref(),
             )?;
-            if reset_advisor_on_authored_input
-                && in_flight.delivery.keyword_scan_source().is_some()
+            if reset_advisor_on_authored_input && in_flight.delivery.keyword_scan_source().is_some()
             {
                 parent_id = Some(crate::agent::append_advisor_input_reset(
                     &mut candidate,
@@ -22824,11 +22823,13 @@ export default function init(pi) {
             .entries_for_current_path()
             .into_iter()
             .filter_map(|entry| match entry {
-                SessionEntry::Custom(custom) if custom.custom_type == "advisor_continuation" => custom
-                    .data
-                    .as_ref()
-                    .and_then(|data| data.get("count"))
-                    .and_then(Value::as_u64),
+                SessionEntry::Custom(custom) if custom.custom_type == "advisor_continuation" => {
+                    custom
+                        .data
+                        .as_ref()
+                        .and_then(|data| data.get("count"))
+                        .and_then(Value::as_u64)
+                }
                 _ => None,
             })
             .collect()
@@ -22902,7 +22903,11 @@ export default function init(pi) {
                     inner.path = Some(path.clone());
                 }
                 assert_eq!(
-                    shared_state.lock(&cx).await.expect("retained queue").pending_count(),
+                    shared_state
+                        .lock(&cx)
+                        .await
+                        .expect("retained queue")
+                        .pending_count(),
                     1
                 );
                 assert_eq!(
@@ -22980,7 +22985,11 @@ export default function init(pi) {
                     Some(Arc::new(move || {
                         let delivery = Arc::clone(&delivery);
                         Box::pin(async move {
-                            delivery.lock().expect("leased input").take().unwrap_or_default()
+                            delivery
+                                .lock()
+                                .expect("leased input")
+                                .take()
+                                .unwrap_or_default()
                         })
                     })),
                     None,
@@ -23007,14 +23016,16 @@ export default function init(pi) {
                     stop_reason: StopReason::ToolUse,
                     ..AssistantMessage::default()
                 })));
-                agent.add_message(Message::ToolResult(Arc::new(crate::model::ToolResultMessage {
-                    tool_call_id: "completed-effect".to_string(),
-                    tool_name: "read".to_string(),
-                    content: vec![ContentBlock::Text(TextContent::new("completed output"))],
-                    details: None,
-                    is_error: false,
-                    timestamp: 2,
-                })));
+                agent.add_message(Message::ToolResult(Arc::new(
+                    crate::model::ToolResultMessage {
+                        tool_call_id: "completed-effect".to_string(),
+                        tool_name: "read".to_string(),
+                        content: vec![ContentBlock::Text(TextContent::new("completed output"))],
+                        details: None,
+                        is_error: false,
+                        timestamp: 2,
+                    },
+                )));
                 let inner_session = Arc::new(asupersync::sync::Mutex::new(stored));
                 let mut agent_session = AgentSession::new(
                     agent,
@@ -23043,7 +23054,10 @@ export default function init(pi) {
                 let messages = reopened.to_messages_for_current_path();
                 assert_eq!(messages.len(), 4, "one input and one completed tool pair");
                 assert_eq!(
-                    messages.iter().filter(|message| matches!(message, Message::User(_))).count(),
+                    messages
+                        .iter()
+                        .filter(|message| matches!(message, Message::User(_)))
+                        .count(),
                     2,
                     "the in-flight lease must not duplicate its recovered user message"
                 );

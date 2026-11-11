@@ -18,12 +18,12 @@ use async_trait::async_trait;
 use futures::{FutureExt as _, StreamExt as _};
 use serde_json::Value;
 
+use super::progress::ProgressRegistry;
 use crate::error::{Error, Result};
 use crate::lsp::jsonrpc::{
     CompletionWaitError, MCP_ENV_ALLOWLIST, PublicTailBuffer, RpcErrorObject, await_completion,
 };
 use crate::tools::{ProcessCleanupMode, ProcessGuard};
-use super::progress::ProgressRegistry;
 
 #[cfg(test)]
 mod progress_tests;
@@ -898,8 +898,8 @@ impl McpStdioClient {
         // ownership to a worker, while the child is still guarded locally.
         #[cfg(unix)]
         let (stdin, stdout, stderr) = {
-            let pipes = cancellable_stdio::prepare(stdin, stdout, stderr, &alive)
-                .map_err(|error| {
+            let pipes =
+                cancellable_stdio::prepare(stdin, stdout, stderr, &alive).map_err(|error| {
                     alive.store(false, Ordering::SeqCst);
                     kill_tree_once(pid, &tree_cleanup_state);
                     let _ = child_guard.kill();
@@ -2577,10 +2577,8 @@ impl HttpTransport {
                 if method == "notifications/progress" {
                     self.progress.publish(&value, wire_state.generation);
                 } else if method == "notifications/tools/list_changed" {
-                    self.tools_list_changed_generation.store(
-                        wire_state.generation.wrapping_add(1),
-                        Ordering::Release,
-                    );
+                    self.tools_list_changed_generation
+                        .store(wire_state.generation.wrapping_add(1), Ordering::Release);
                 }
                 return Ok(None);
             };
@@ -5508,9 +5506,8 @@ pub(crate) mod tests {
     #[test]
     fn streamable_http_dropped_initialize_future_aborts_without_cancellation() {
         let server = DripBodyHttpServer::start(500, "Internal Server Error");
-        let transport = std::sync::Arc::new(
-            HttpTransport::new(&server.url(), Vec::new()).expect("transport"),
-        );
+        let transport =
+            std::sync::Arc::new(HttpTransport::new(&server.url(), Vec::new()).expect("transport"));
         let runtime = runtime_for_tests();
         runtime.block_on(async {
             let initialize = Box::pin(transport.request(
@@ -5542,9 +5539,8 @@ pub(crate) mod tests {
     #[test]
     fn streamable_http_dropped_initialized_future_aborts_without_cancellation() {
         let server = DripBodyHttpServer::start(500, "Internal Server Error");
-        let transport = std::sync::Arc::new(
-            HttpTransport::new(&server.url(), Vec::new()).expect("transport"),
-        );
+        let transport =
+            std::sync::Arc::new(HttpTransport::new(&server.url(), Vec::new()).expect("transport"));
         transport
             .capture_initialize_state(
                 &initialize_success_body(),

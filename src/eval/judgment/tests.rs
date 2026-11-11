@@ -1,7 +1,9 @@
 //! Native eval/kernel integrations with a controlled provider, not live-model acceptance.
 use super::*;
 use crate::eval::EvalTool;
-use crate::model::{AssistantMessage, ContentBlock, Message, StopReason, StreamEvent, TextContent, UserContent};
+use crate::model::{
+    AssistantMessage, ContentBlock, Message, StopReason, StreamEvent, TextContent, UserContent,
+};
 use crate::provider::{Context, Provider};
 use crate::tools::Tool;
 use futures::Stream;
@@ -35,12 +37,17 @@ impl RecordedProvider {
     }
 
     fn judge(self: &Arc<Self>) -> Judge {
-        Judge::new(self.clone(), StreamOptions {
-            api_key: Some("host-only-credential".into()),
-            headers: [("X-Host-Binding".into(), "retained-header".into())].into_iter().collect(),
-            max_tokens: Some(99),
-            ..StreamOptions::default()
-        })
+        Judge::new(
+            self.clone(),
+            StreamOptions {
+                api_key: Some("host-only-credential".into()),
+                headers: [("X-Host-Binding".into(), "retained-header".into())]
+                    .into_iter()
+                    .collect(),
+                max_tokens: Some(99),
+                ..StreamOptions::default()
+            },
+        )
     }
 }
 
@@ -54,26 +61,49 @@ impl Stream for PendingReply {
 }
 
 impl Drop for PendingReply {
-    fn drop(&mut self) { self.0.store(true, Ordering::Release); }
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
 }
 
 #[async_trait::async_trait]
 impl Provider for RecordedProvider {
-    fn name(&self) -> &str { "fixture" }
-    fn api(&self) -> &str { "fixture-stream" }
-    fn model_id(&self) -> &str { "eval-judge" }
+    fn name(&self) -> &str {
+        "fixture"
+    }
+    fn api(&self) -> &str {
+        "fixture-stream"
+    }
+    fn model_id(&self) -> &str {
+        "eval-judge"
+    }
 
-    async fn stream(&self, context: &Context<'_>, options: &StreamOptions)
-        -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
+    async fn stream(
+        &self,
+        context: &Context<'_>,
+        options: &StreamOptions,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
         assert!(context.tools.is_empty(), "judgments must not execute tools");
         assert_eq!(context.messages.len(), 1, "no conversation replay");
         assert_eq!(options.api_key.as_deref(), Some("host-only-credential"));
-        assert_eq!(options.headers.get("X-Host-Binding").map(String::as_str), Some("retained-header"));
+        assert_eq!(
+            options.headers.get("X-Host-Binding").map(String::as_str),
+            Some("retained-header")
+        );
         assert_eq!(options.max_tokens, Some(99));
-        let Message::User(message) = &context.messages[0] else { panic!("state message"); };
-        let UserContent::Text(text) = &message.content else { panic!("text state"); };
+        let Message::User(message) = &context.messages[0] else {
+            panic!("state message");
+        };
+        let UserContent::Text(text) = &message.content else {
+            panic!("text state");
+        };
         self.prompts.lock().unwrap().push(text.clone());
-        let reply = self.replies.lock().unwrap().pop_front().unwrap_or(Reply::Answer(ANSWER));
+        let reply = self
+            .replies
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Reply::Answer(ANSWER));
         match reply {
             Reply::Pending => Ok(Box::pin(PendingReply(Arc::clone(&self.dropped)))),
             Reply::Answer(answer) => {
@@ -85,7 +115,8 @@ impl Provider for RecordedProvider {
                 message.usage.input = 11;
                 message.usage.output = 2;
                 Ok(Box::pin(futures::stream::iter([Ok(StreamEvent::Done {
-                    reason: StopReason::Stop, message,
+                    reason: StopReason::Stop,
+                    message,
                 })])))
             }
         }
@@ -104,32 +135,46 @@ fn code(kernel: &str) -> String {
         format!("JSON.parse(await tool.call('__pi_judge', {request})).answers.q.bool")
     } else {
         let request = serde_json::to_string(&request).unwrap();
-        format!("import json\nreply = json.loads(await tool.call('__pi_judge', json.loads({request})))\nreply['answers']['q']['bool']")
+        format!(
+            "import json\nreply = json.loads(await tool.call('__pi_judge', json.loads({request})))\nreply['answers']['q']['bool']"
+        )
     }
 }
 
 fn text(output: &ToolOutput) -> String {
-    output.content.iter().filter_map(|block| match block {
-        ContentBlock::Text(text) => Some(text.text.as_str()),
-        _ => None,
-    }).collect()
+    output
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.text.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn runtime() -> asupersync::runtime::Runtime {
-    asupersync::runtime::RuntimeBuilder::current_thread().blocking_threads(1, 8)
-        .build().unwrap()
+    asupersync::runtime::RuntimeBuilder::current_thread()
+        .blocking_threads(1, 8)
+        .build()
+        .unwrap()
 }
 
 fn python_available() -> bool {
-    std::process::Command::new("python3").arg("--version")
-        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-        .status().is_ok_and(|status| status.success())
+    std::process::Command::new("python3")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 #[test]
 fn model_selection_is_explicit_bounded_and_rejects_guest_credentials() {
     assert!(Selection::parse(&json!({"provider":"fixture","model":"family/model"})).is_ok());
-    for selection in [Value::Null, json!("fixture/model"), json!({}),
+    for selection in [
+        Value::Null,
+        json!("fixture/model"),
+        json!({}),
         json!({"provider":"fixture","model":""}),
         json!({"provider":"fixture","model":"x","api_key":"CANARY"}),
         json!({"provider":"fixture","model":"x","base_url":"http://other"}),
@@ -149,16 +194,32 @@ fn invalid_or_conflicting_selection_never_waits_or_resets_a_kernel() {
     let provider = RecordedProvider::new([]);
     let tool = EvalTool::new(dir.path()).with_judge(provider.judge());
     runtime().block_on(async {
-        tool.execute("seed", json!({"kernel":"js","code":"globalThis.keep = 7"}), None).await.unwrap();
+        tool.execute(
+            "seed",
+            json!({"kernel":"js","code":"globalThis.keep = 7"}),
+            None,
+        )
+        .await
+        .unwrap();
         let lease = tool.execution.lock().await;
         for selection in [Value::Null, json!({"provider":"fixture","model":"x"})] {
-            let mut invalid = tool.execute("invalid", json!({
-                "kernel":"js","code":"globalThis.keep = 99","reset":true,"judge_model":selection
-            }), None);
-            assert!(matches!(futures::poll!(invalid.as_mut()), Poll::Ready(Err(_))));
+            let mut invalid = tool.execute(
+                "invalid",
+                json!({
+                    "kernel":"js","code":"globalThis.keep = 99","reset":true,"judge_model":selection
+                }),
+                None,
+            );
+            assert!(matches!(
+                futures::poll!(invalid.as_mut()),
+                Poll::Ready(Err(_))
+            ));
         }
         drop(lease);
-        let kept = tool.execute("kept", json!({"kernel":"js","code":"keep"}), None).await.unwrap();
+        let kept = tool
+            .execute("kept", json!({"kernel":"js","code":"keep"}), None)
+            .await
+            .unwrap();
         assert_eq!(text(&kept).trim(), "7");
         assert_eq!(kept.details.unwrap()["cell"], 2);
     });
@@ -168,13 +229,18 @@ fn invalid_or_conflicting_selection_never_waits_or_resets_a_kernel() {
 #[test]
 fn both_native_kernels_return_typed_results_and_host_owned_usage_receipts() {
     for kernel in ["js", "python"] {
-        if kernel == "python" && !python_available() { continue; }
+        if kernel == "python" && !python_available() {
+            continue;
+        }
         let dir = tempfile::tempdir().unwrap();
         let provider = RecordedProvider::new([]);
         let tool = EvalTool::new(dir.path()).with_judge(provider.judge());
         runtime().block_on(async {
             for cell in 1..=2 {
-                let output = tool.execute("judge", json!({"kernel":kernel,"code":code(kernel)}), None).await.unwrap();
+                let output = tool
+                    .execute("judge", json!({"kernel":kernel,"code":code(kernel)}), None)
+                    .await
+                    .unwrap();
                 assert!(!output.is_error, "{}", text(&output));
                 assert_eq!(text(&output).trim(), "0.8");
                 let details = output.details.unwrap();
@@ -197,14 +263,18 @@ fn both_native_kernels_return_typed_results_and_host_owned_usage_receipts() {
 fn unbound_judgments_and_nested_result_operations_do_not_expand_tool_authority() {
     let dir = tempfile::tempdir().unwrap();
     let unbound = EvalTool::new(dir.path());
-    let output = runtime().block_on(unbound.execute("unbound", json!({"kernel":"js","code":code("js")}), None)).unwrap();
+    let output = runtime()
+        .block_on(unbound.execute("unbound", json!({"kernel":"js","code":code("js")}), None))
+        .unwrap();
     assert!(output.is_error);
     assert!(text(&output).contains("PI_JUDGE_UNBOUND"));
     assert!(output.details.unwrap().get("judgments").is_none());
     let provider = RecordedProvider::new([]);
     let tool = EvalTool::new(dir.path()).with_judge(provider.judge());
     let nested = format!("await tool.result('__pi_judge', {})", request());
-    let output = runtime().block_on(tool.execute("nested", json!({"kernel":"js","code":nested}), None)).unwrap();
+    let output = runtime()
+        .block_on(tool.execute("nested", json!({"kernel":"js","code":nested}), None))
+        .unwrap();
     assert!(output.is_error);
     assert!(text(&output).contains("EVAL_BRIDGE_DENIED"));
     assert!(provider.prompts.lock().unwrap().is_empty());
@@ -224,25 +294,46 @@ fn live_privacy_is_applied_to_dynamic_state_and_never_retained_between_cells() {
     runtime().block_on(async {
         for replacement in ["redacted-one", "redacted-two"] {
             let protect = |parts: &[&str]| -> Result<Vec<String>> {
-                Ok(parts.iter().map(|part| part.replace("SESSION-CANARY", replacement)).collect())
+                Ok(parts
+                    .iter()
+                    .map(|part| part.replace("SESSION-CANARY", replacement))
+                    .collect())
             };
-            let output = tool.execute_with_auxiliary_privacy("private", input.clone(), None, &protect).await.unwrap();
+            let output = tool
+                .execute_with_auxiliary_privacy("private", input.clone(), None, &protect)
+                .await
+                .unwrap();
             assert!(!output.is_error, "{}", text(&output));
-            assert_eq!(output.details.unwrap()["judgments"]["attempts"][0]["status"], "completed");
+            assert_eq!(
+                output.details.unwrap()["judgments"]["attempts"][0]["status"],
+                "completed"
+            );
         }
         let blocked = |_parts: &[&str]| -> Result<Vec<String>> {
-            Err(Error::validation("PI_SECRET_BLOCK: SESSION-CANARY must not escape"))
+            Err(Error::validation(
+                "PI_SECRET_BLOCK: SESSION-CANARY must not escape",
+            ))
         };
-        let output = tool.execute_with_auxiliary_privacy("blocked", input, None, &blocked).await.unwrap();
+        let output = tool
+            .execute_with_auxiliary_privacy("blocked", input, None, &blocked)
+            .await
+            .unwrap();
         assert!(output.is_error);
         assert!(!text(&output).contains("SESSION-CANARY"));
-        assert_eq!(output.details.unwrap()["judgments"]["attempts"][0]["usageKnown"], false);
+        assert_eq!(
+            output.details.unwrap()["judgments"]["attempts"][0]["usageKnown"],
+            false
+        );
     });
     let prompts = provider.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 2, "blocked before provider admission");
     assert!(prompts[0].contains("redacted-one"));
     assert!(prompts[1].contains("redacted-two"));
-    assert!(prompts.iter().all(|prompt| !prompt.contains("SESSION-CANARY")));
+    assert!(
+        prompts
+            .iter()
+            .all(|prompt| !prompt.contains("SESSION-CANARY"))
+    );
 }
 
 #[test]
@@ -293,20 +384,35 @@ fn cell_deadline_drops_an_admitted_judgment_and_reports_unknown_usage() {
     let provider = RecordedProvider::new([Reply::Pending]);
     let tool = EvalTool::new(dir.path()).with_judge(provider.judge());
     let started = Instant::now();
-    let output = runtime().block_on(tool.execute("deadline", json!({
-        "kernel":"js","code":code("js"),"timeout_secs":2
-    }), None)).unwrap();
+    let output = runtime()
+        .block_on(tool.execute(
+            "deadline",
+            json!({
+                "kernel":"js","code":code("js"),"timeout_secs":2
+            }),
+            None,
+        ))
+        .unwrap();
     assert!(output.is_error);
     assert!(text(&output).contains("EVAL_TIMEOUT"));
     assert!(started.elapsed() < Duration::from_secs(10));
-    assert_eq!(provider.prompts.lock().unwrap().len(), 1, "causal provider admission");
-    assert!(provider.dropped.load(Ordering::Acquire), "no detached judgment stream");
+    assert_eq!(
+        provider.prompts.lock().unwrap().len(),
+        1,
+        "causal provider admission"
+    );
+    assert!(
+        provider.dropped.load(Ordering::Acquire),
+        "no detached judgment stream"
+    );
     let details = output.details.unwrap();
     assert_eq!(details["stateReset"], true);
     assert_eq!(details["judgments"]["attempts"][0]["status"], "incomplete");
     assert_eq!(details["judgments"]["attempts"][0]["usageKnown"], false);
     assert!(tool.execution.try_lock().is_some());
-    let fresh = runtime().block_on(tool.execute("fresh", json!({"kernel":"js","code":"42"}), None)).unwrap();
+    let fresh = runtime()
+        .block_on(tool.execute("fresh", json!({"kernel":"js","code":"42"}), None))
+        .unwrap();
     assert!(!fresh.is_error);
     assert_eq!(fresh.details.unwrap()["cell"], 1);
 }

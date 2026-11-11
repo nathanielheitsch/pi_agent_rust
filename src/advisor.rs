@@ -659,6 +659,8 @@ impl AdvisorRuntime {
         };
         let call = self.call_advisor(&digest);
         let timeout = remaining_time.map_or(self.timeout, |time| time.min(self.timeout));
+        // `abort.cloned()` is not cosmetic: with_timeout_and_abort owns the signal
+        // here, matching the owned-signal review path this branch adopted.
         let reply =
             match crate::text_completion::with_timeout_and_abort(timeout, abort.cloned(), call)
                 .await

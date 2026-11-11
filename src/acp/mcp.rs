@@ -482,10 +482,12 @@ mod tests {
     fn disabled_host_refuses_definitions_before_parsing() {
         let cwd = Path::new("/not-opened");
         assert!(parse_servers(&json!({}), cwd, true).unwrap().is_none());
-        assert!(parse_servers(&json!({"mcpServers": []}), cwd, true)
-            .unwrap()
-            .unwrap()
-            .is_empty());
+        assert!(
+            parse_servers(&json!({"mcpServers": []}), cwd, true)
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
         for supplied in [json!([{"not": "a server"}]), json!(null), json!("bad")] {
             let error = parse_servers(&json!({"mcpServers": supplied}), cwd, true)
                 .expect_err("host isolation wins before definition validation");

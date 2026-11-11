@@ -2168,7 +2168,9 @@ fn prewalk_cross_provider_persists_the_whole_batch_and_retains_hook_prompt_acros
                 .iter()
                 .filter(|message| {
                     message["role"] == "user"
-                        && message["content"].to_string().contains("implement both files")
+                        && message["content"]
+                            .to_string()
+                            .contains("implement both files")
                 })
                 .count(),
             1
@@ -2440,7 +2442,10 @@ impl Provider for OverflowRecoveryProvider {
                 StopReason::Stop,
             )
         } else {
-            self.observed.lock().unwrap().push(context.messages.to_vec());
+            self.observed
+                .lock()
+                .unwrap()
+                .push(context.messages.to_vec());
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
             let large_read = self.write_first && self.large_read.load(Ordering::SeqCst);
             if self.write_first && call == 0 {
@@ -2714,10 +2719,12 @@ fn overflow_keeps_native_request_and_large_completed_tool_tail_or_stops_without_
         };
         let kept_input_index = retained
             .iter()
-            .rposition(|message| matches!(
-                message, Message::User(UserMessage { content: UserContent::Blocks(blocks), .. })
-                    if serde_json::to_value(blocks).unwrap() == expected
-            ))
+            .rposition(|message| {
+                matches!(
+                    message, Message::User(UserMessage { content: UserContent::Blocks(blocks), .. })
+                        if serde_json::to_value(blocks).unwrap() == expected
+                )
+            })
             .expect("exact native user blocks retained");
         assert_eq!(
             serde_json::to_value(&retained[kept_input_index..]).unwrap(),
@@ -2778,8 +2785,8 @@ fn overflow_rejects_extension_cuts_that_discard_current_input_or_name_unknown_en
                 content: UserContent::Blocks(native_content_fixture()),
                 timestamp: 0,
             }));
-            let late_cut = stored.append_model_message(Message::Assistant(Arc::new(
-                AssistantMessage {
+            let late_cut =
+                stored.append_model_message(Message::Assistant(Arc::new(AssistantMessage {
                     content: vec![ContentBlock::ToolCall(crate::model::ToolCall {
                         id: "already-completed-write".to_string(),
                         name: "write".to_string(),
@@ -2793,8 +2800,7 @@ fn overflow_rejects_extension_cuts_that_discard_current_input_or_name_unknown_en
                     model: provider.model_id().to_string(),
                     stop_reason: StopReason::ToolUse,
                     ..Default::default()
-                },
-            )));
+                })));
             stored.append_model_message(Message::ToolResult(
                 crate::model::ToolResultMessage {
                     tool_call_id: "already-completed-write".to_string(),
@@ -2824,7 +2830,11 @@ fn overflow_rejects_extension_cuts_that_discard_current_input_or_name_unknown_en
         let (events, callback) = event_log();
         let error = run_async(handle.continue_turn(move |event| callback(event)))
             .expect_err("unsafe extension cut must be refused");
-        assert!(error.to_string().contains("discard the current user request"));
+        assert!(
+            error
+                .to_string()
+                .contains("discard the current user request")
+        );
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
         assert_eq!(provider.summaries.load(Ordering::SeqCst), 0);
         assert_eq!(
@@ -2835,10 +2845,12 @@ fn overflow_rejects_extension_cuts_that_discard_current_input_or_name_unknown_en
         handle.session.ensure_provider_reentry_allowed().unwrap();
         let store = handle.session_store();
         let stored = store.try_lock().unwrap();
-        assert!(stored.entries.iter().all(|entry| !matches!(
-            entry,
-            crate::session::SessionEntry::Compaction(_)
-        )));
+        assert!(
+            stored
+                .entries
+                .iter()
+                .all(|entry| !matches!(entry, crate::session::SessionEntry::Compaction(_)))
+        );
         let path = stored.path.clone().unwrap();
         drop(stored);
         let reopened = run_async(Session::open(&path.display().to_string())).unwrap();
@@ -2928,15 +2940,21 @@ fn disabled_compaction_and_unsplittable_input_never_reenter_the_provider() {
             *handle.session_store().try_lock().unwrap() = fresh;
         }
         let (events, callback) = event_log();
-        let result = run_async(handle.prompt("one unsplittable current request", move |event| {
-            callback(event);
-        }));
+        let result = run_async(
+            handle.prompt("one unsplittable current request", move |event| {
+                callback(event);
+            }),
+        );
         assert!(result.is_err(), "disabled={disabled}: {result:?}");
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
         assert_eq!(provider.summaries.load(Ordering::SeqCst), 0);
         let events = events.lock().unwrap();
         assert_eq!(lifecycle_names(&events), ["agent_start", "agent_end"]);
-        assert!(events.iter().all(|event| event["type"] != "auto_compaction_start"));
+        assert!(
+            events
+                .iter()
+                .all(|event| event["type"] != "auto_compaction_start")
+        );
         handle.session.ensure_provider_reentry_allowed().unwrap();
     }
 }

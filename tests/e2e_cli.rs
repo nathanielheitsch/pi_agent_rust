@@ -4861,9 +4861,7 @@ fn e2e_cli_no_mcp_skips_acknowledged_servers_and_credentials() {
     fs::create_dir_all(&global).expect("global MCP directory");
     let server_marker = harness.harness.temp_path("mcp-server-started");
     let credential_marker = harness.harness.temp_path("mcp-credential-resolved");
-    let quote = |path: &Path| {
-        format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
-    };
+    let quote = |path: &Path| format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"));
     fs::write(
         global.join("mcp.json"),
         json!({
@@ -4888,7 +4886,11 @@ fn e2e_cli_no_mcp_skips_acknowledged_servers_and_credentials() {
     let server = discovery.servers.first().expect("discover fixture");
     pi::mcp::TrustStore::load(&global.join("mcp-trust.json"))
         .expect("load MCP trust")
-        .acknowledge(&server.name, &server.fingerprint(&cwd), "CLI isolation test")
+        .acknowledge(
+            &server.name,
+            &server.fingerprint(&cwd),
+            "CLI isolation test",
+        )
         .expect("acknowledge fixture without executing it");
 
     let system_prompt = "Test MCP isolation.";

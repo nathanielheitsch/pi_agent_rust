@@ -88,9 +88,18 @@ pub(super) fn requested(input: &Value) -> Result<bool> {
         Some(Value::String(operation))
             if matches!(
                 operation.as_str(),
-                "worker_start" | "worker_send" | "worker_status" | "worker_wait" | "worker_close"
-                    | "pool_start" | "pool_push" | "pool_finish" | "pool_status"
-                    | "pool_result" | "pool_wait" | "pool_close"
+                "worker_start"
+                    | "worker_send"
+                    | "worker_status"
+                    | "worker_wait"
+                    | "worker_close"
+                    | "pool_start"
+                    | "pool_push"
+                    | "pool_finish"
+                    | "pool_status"
+                    | "pool_result"
+                    | "pool_wait"
+                    | "pool_close"
             ) =>
         {
             Ok(true)
@@ -738,11 +747,13 @@ pub(super) fn complete_turn(shared: &Shared, id: u64, result: Result<ToolOutput>
         turn.status = status;
         turn.result = Some(output);
         state.result_bytes = state.result_bytes.saturating_add(bytes);
-        let notice = state.emit_notices.then(|| format!(
-            "[reusable worker {} turn {id} {status}]\n{}",
-            state.id,
-            if over_budget { WITHHELD } else { &summary }
-        ));
+        let notice = state.emit_notices.then(|| {
+            format!(
+                "[reusable worker {} turn {id} {status}]\n{}",
+                state.id,
+                if over_budget { WITHHELD } else { &summary }
+            )
+        });
         Ok(((), notice))
     });
     if accepted.is_err() {

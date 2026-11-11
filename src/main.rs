@@ -2805,12 +2805,15 @@ async fn run(
     let mcp_manager = if cli.no_mcp {
         None
     } else {
-        Some(std::sync::Arc::new(pi::mcp::McpManager::bootstrap(
-            &cwd,
-            &pi::config::Config::global_dir(),
-            &cli.mcp_config,
-            workspace_trusted,
-        )?.with_default_timeout(config.mcp_default_timeout_ms())))
+        Some(std::sync::Arc::new(
+            pi::mcp::McpManager::bootstrap(
+                &cwd,
+                &pi::config::Config::global_dir(),
+                &cli.mcp_config,
+                workspace_trusted,
+            )?
+            .with_default_timeout(config.mcp_default_timeout_ms()),
+        ))
     };
     let mut extension_bindings = Vec::new();
     let mut extension_model_entries = Vec::new();
@@ -3466,7 +3469,8 @@ async fn handle_subcommand(
                 offline,
                 project_trusted,
                 cli,
-            ).await?;
+            )
+            .await?;
         }
         cli::Commands::Gc {
             older_than,
@@ -6212,7 +6216,10 @@ async fn review_model_client(
     let global = Config::global_dir();
     let config_path = Config::config_path_override_from_env(cwd);
     let config = Config::load_with_roots_and_project_trust(
-        config_path.as_deref(), &global, cwd, project_trusted,
+        config_path.as_deref(),
+        &global,
+        cwd,
+        project_trusted,
     )?;
     for warning in pi::http::proxy::configure(config.http.as_ref()) {
         tracing::warn!("{warning}");
@@ -6233,24 +6240,51 @@ async fn review_model_client(
     if let Some(error) = registry.error() {
         return Err(anyhow::anyhow!("Cannot load review model catalog: {error}"));
     }
-    let scope = config.model_scope_overrides.as_deref()
+    let scope = config
+        .model_scope_overrides
+        .as_deref()
         .and_then(|overrides| pi::failover::best_scope_override(overrides, cwd));
-    let patterns = cli.models.as_deref().map(pi::app::parse_models_arg)
+    let patterns = cli
+        .models
+        .as_deref()
+        .map(pi::app::parse_models_arg)
         .or_else(|| scope.and_then(|scope| scope.enabled_models.clone()))
         .unwrap_or_else(|| config.enabled_models.clone().unwrap_or_default());
     validate_startup_api_key_scope(cli, &patterns)?;
     let session = Session::in_memory();
     let (selection, key) = resolve_selection_with_auth(
-        cli, &config, &session, cwd, &mut registry, &patterns, &mut auth,
-        &models_path, false, &[], &[],
-    ).await?.ok_or_else(|| anyhow::anyhow!("No review model selected"))?;
-    validate_startup_oauth_refresh(cli, &refresh, &selection.model_entry.model.provider, &[], false)?;
+        cli,
+        &config,
+        &session,
+        cwd,
+        &mut registry,
+        &patterns,
+        &mut auth,
+        &models_path,
+        false,
+        &[],
+        &[],
+    )
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("No review model selected"))?;
+    validate_startup_oauth_refresh(
+        cli,
+        &refresh,
+        &selection.model_entry.model.provider,
+        &[],
+        false,
+    )?;
     if let Some(warning) = &selection.fallback_message {
         eprintln!("{warning}");
     }
-    let provider = pi::providers::create_provider_with_auth(&selection.model_entry, None, Some(&auth))?;
+    let provider =
+        pi::providers::create_provider_with_auth(&selection.model_entry, None, Some(&auth))?;
     let stream_options = pi::app::build_stream_options(&config, key, &selection, &session);
-    Ok(pi::review::ModelReviewer::new(provider, stream_options, config.secrets.as_ref()))
+    Ok(pi::review::ModelReviewer::new(
+        provider,
+        stream_options,
+        config.secrets.as_ref(),
+    ))
 }
 
 /// `pi gc` (bd-cv653.7.11): retention-policy pruning for sessions, artifacts, and caches.

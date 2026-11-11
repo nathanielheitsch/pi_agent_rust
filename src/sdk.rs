@@ -1584,7 +1584,8 @@ impl RpcTransportClient {
         objective: Option<&str>,
         token_budget: Option<u64>,
     ) -> Result<RpcGoalResult> {
-        self.goal_with_limits(op, objective, token_budget, None).await
+        self.goal_with_limits(op, objective, token_budget, None)
+            .await
     }
 
     /// `goal` with an optional native prompt-count budget.
@@ -4027,12 +4028,15 @@ pub(crate) async fn create_agent_session_deferred_mcp(
 
     let mcp_manager = if let Some(mcp) = &options.mcp {
         let global_dir = mcp.global_dir.clone().unwrap_or_else(Config::global_dir);
-        let manager = Arc::new(crate::mcp::McpManager::bootstrap(
-            &cwd,
-            &global_dir,
-            &mcp.config_paths,
-            options.workspace_trusted,
-        )?.with_default_timeout(config.mcp_default_timeout_ms()));
+        let manager = Arc::new(
+            crate::mcp::McpManager::bootstrap(
+                &cwd,
+                &global_dir,
+                &mcp.config_paths,
+                options.workspace_trusted,
+            )?
+            .with_default_timeout(config.mcp_default_timeout_ms()),
+        );
         if let Some(extension_manager) = agent_session
             .extensions
             .as_ref()
