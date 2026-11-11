@@ -273,8 +273,7 @@ fn text_aliases_and_special_files_obey_the_shared_data_boundary() {
     for name in ["./alias.json", "./alias.mjs", "./data.txt", "./code.txt", "./escape.txt"] {
         assert!(files.resolve_path("eval_script", name).is_err(), "accepted {name}");
     }
-    rustix::fs::mkfifoat(rustix::fs::CWD, root.join("pipe.txt"),
-        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR).unwrap();
+    crate::platform::make_fifo_fixture(&root.join("pipe.txt")).unwrap();
     let name = files.resolve_path("eval_script", "./pipe.txt").unwrap();
     assert!(files.read_module(&name).err().unwrap().contains("PATH"));
 }

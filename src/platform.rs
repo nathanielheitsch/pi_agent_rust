@@ -5,6 +5,32 @@
 //! `std::env::consts` values to the provider-expected naming conventions
 //! (e.g. `darwin` instead of `macos`, `arm64` instead of `aarch64`).
 
+/// Create a FIFO fixture for a test that asserts a reader refuses a
+/// non-regular file without opening it.
+///
+/// `rustix::fs::mkfifo`/`mkfifoat` exist only on `linux_raw`, so calling them
+/// directly breaks compilation on every other unix target. The repository's
+/// existing FIFO fixtures (`src/models.rs`, `src/url_router/documents.rs`)
+/// already shell out to the `mkfifo` utility that unix ships, so the behaviour
+/// under test stays identical off Linux instead of being silently skipped.
+#[cfg(all(test, unix))]
+pub(crate) fn make_fifo_fixture(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        rustix::fs::mkfifo(path, rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR)
+            .map_err(std::io::Error::from)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let status = std::process::Command::new("mkfifo").arg(path).status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other("mkfifo fixture creation failed"))
+        }
+    }
+}
+
 use std::path::Path;
 
 /// Crate version baked in at compile time.

@@ -102,7 +102,12 @@ impl AgentCx {
     /// even if never polled or dropped on another worker. Completion retires
     /// it before returning its output; ownership of that output passes to the
     /// caller. Dropping a future does not promise async cleanup or rollback.
-    pub(crate) fn with_current<F: Future>(&self, future: F) -> impl Future<Output = F::Output> {
+    ///
+    /// Public because embedding code driving tools or provider turns directly —
+    /// integration tests and SDK hosts alike — must install the owner the same
+    /// way the agent loop does; without it a `Tool::execute` future runs with no
+    /// ambient authority and takes the unowned path instead.
+    pub fn with_current<F: Future>(&self, future: F) -> impl Future<Output = F::Output> {
         ScopedOperation {
             owner: self,
             future: Some(Box::pin(future)),

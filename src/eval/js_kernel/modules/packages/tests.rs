@@ -174,8 +174,7 @@ fn in_workspace_package_links_work_but_escaping_links_and_special_manifests_fail
     std::os::unix::fs::symlink(&outside, root.join("node_modules/escape")).unwrap();
     assert!(files.resolve_path("eval_script", "escape").unwrap_err().contains("PATH"));
     std::fs::create_dir(root.join("node_modules/pipe")).unwrap();
-    rustix::fs::mkfifoat(rustix::fs::CWD, root.join("node_modules/pipe/package.json"),
-        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR).unwrap();
+    crate::platform::make_fifo_fixture(&root.join("node_modules/pipe/package.json")).unwrap();
     assert!(files.resolve_path("eval_script", "pipe").unwrap_err().contains("LIMIT"));
 }
 

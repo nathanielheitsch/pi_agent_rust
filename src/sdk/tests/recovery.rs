@@ -2057,9 +2057,9 @@ fn prewalk_http_handle(
     session.set_auth_storage(AuthStorage::empty_at(dir.join("auth.json")));
     if with_todo {
         let stored = Arc::clone(&session.session);
-        session
-            .agent
-            .extend_tools(vec![Box::new(crate::todo::TodoTool::new(stored))]);
+        session.agent.extend_tools(vec![
+            Box::new(crate::todo::TodoTool::new(stored)) as Box<dyn crate::tools::Tool>
+        ]);
     }
     AgentSessionHandle::from_session_with_listeners(session, EventListeners::new())
 }
@@ -2795,14 +2795,17 @@ fn overflow_rejects_extension_cuts_that_discard_current_input_or_name_unknown_en
                     ..Default::default()
                 },
             )));
-            stored.append_model_message(Message::ToolResult(crate::model::ToolResultMessage {
-                tool_call_id: "already-completed-write".to_string(),
-                tool_name: "write".to_string(),
-                content: vec![ContentBlock::Text(TextContent::new("saved"))],
-                details: None,
-                is_error: false,
-                timestamp: 0,
-            }));
+            stored.append_model_message(Message::ToolResult(
+                crate::model::ToolResultMessage {
+                    tool_call_id: "already-completed-write".to_string(),
+                    tool_name: "write".to_string(),
+                    content: vec![ContentBlock::Text(TextContent::new("saved"))],
+                    details: None,
+                    is_error: false,
+                    timestamp: 0,
+                }
+                .into(),
+            ));
             late_cut
         };
         run_async(handle.session.persist_session()).unwrap();

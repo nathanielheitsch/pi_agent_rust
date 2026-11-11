@@ -16,6 +16,20 @@ pub(super) struct Evaluator {
     compile_body: Persistent<Function<'static>>,
 }
 
+/// One cell's evaluation result, plus the grammar that produced it.
+///
+/// QuickJS compiles an async-grammar eval as an async function and returns the
+/// completion value wrapped as `{ value: <completion> }` — in the vendored
+/// quickjs.c that is the `JS_FUNC_ASYNC` branch of the eval body's return
+/// emission. The wrapper is an implementation detail of the grammar, not a cell
+/// result, so the caller unwraps it. Unwrapping unconditionally would be wrong:
+/// an ordinary cell whose last expression is `({ value: 7 })` returns a
+/// guest-owned object that must survive unchanged.
+pub(super) struct Evaluated<'js> {
+    pub(super) value: Value<'js>,
+    pub(super) async_grammar: bool,
+}
+
 impl Evaluator {
     pub(super) fn new(ctx: &Ctx<'_>) -> rquickjs::Result<Self> {
         let constructor: Function<'_> = ctx.globals().get("Function")?;
@@ -29,7 +43,7 @@ impl Evaluator {
         ctx: &Ctx<'js>,
         code: &str,
         filename: Option<&str>,
-    ) -> rquickjs::Result<Value<'js>> {
+    ) -> rquickjs::Result<Evaluated<'js>> {
         let constructor = self.compile_body.clone().restore(ctx)?;
         // Hashbangs are valid only at the start of a script, not a function
         // body. Remove one from the probe only; evaluate the original bytes.
@@ -67,6 +81,9 @@ impl Evaluator {
         // Preserve the real origin for stacks and dynamic imports, including
         // functions defined by this script and invoked in later cells.
         options.filename = filename.map(str::to_owned);
-        ctx.eval_with_options(code.as_bytes(), options)
+        Ok(Evaluated {
+            value: ctx.eval_with_options::<Value<'js>, _>(code.as_bytes(), options)?,
+            async_grammar: needs_async,
+        })
     }
 }
