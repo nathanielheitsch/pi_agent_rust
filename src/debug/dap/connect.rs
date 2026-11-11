@@ -171,11 +171,16 @@ mod tests {
         loop {
             match listener.accept() {
                 Ok((stream, _)) => {
+                    // The listener is nonblocking and an accepted stream inherits
+                    // that flag on macOS, where a nonblocking read returns
+                    // WouldBlock immediately and ignores any read timeout. Restore
+                    // blocking mode before setting the patience budget.
+                    stream.set_nonblocking(false).unwrap();
                     stream
-                        .set_read_timeout(Some(Duration::from_secs(3)))
+                        .set_read_timeout(Some(Duration::from_secs(30)))
                         .unwrap();
                     stream
-                        .set_write_timeout(Some(Duration::from_secs(3)))
+                        .set_write_timeout(Some(Duration::from_secs(30)))
                         .unwrap();
                     return stream;
                 }

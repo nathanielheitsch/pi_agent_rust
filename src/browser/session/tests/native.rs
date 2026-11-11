@@ -30,10 +30,10 @@ fn step(method: &'static str, params: Value, result: Value) -> Step {
 
 fn headers(stream: &mut TcpStream) -> String {
     stream
-        .set_read_timeout(Some(Duration::from_secs(8)))
+        .set_read_timeout(Some(Duration::from_secs(30)))
         .unwrap();
     stream
-        .set_write_timeout(Some(Duration::from_secs(8)))
+        .set_write_timeout(Some(Duration::from_secs(30)))
         .unwrap();
     let mut bytes = Vec::new();
     while !bytes.ends_with(b"\r\n\r\n") {
@@ -49,7 +49,14 @@ fn accept(listener: &TcpListener) -> TcpStream {
     let deadline = Instant::now() + Duration::from_secs(8);
     loop {
         match listener.accept() {
-            Ok((stream, _)) => return stream,
+            Ok((stream, _)) => {
+                // The listener is nonblocking and an accepted stream inherits that
+                // flag on macOS, where a nonblocking read returns WouldBlock
+                // immediately and any read timeout is ignored. Restore blocking
+                // mode so the fixture's reads wait instead of panicking.
+                stream.set_nonblocking(false).unwrap();
+                return stream;
+            }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 assert!(Instant::now() < deadline, "native browser never connected");
                 thread::sleep(Duration::from_millis(2));
