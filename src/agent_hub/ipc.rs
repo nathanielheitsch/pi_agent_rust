@@ -452,7 +452,9 @@ impl Connection {
     }
 
     fn advance_result(&mut self) -> bool {
-        let Some(stream) = self.result_stream.as_mut() else { return false; };
+        let Some(stream) = self.result_stream.as_mut() else {
+            return false;
+        };
         match stream.next_response() {
             Ok(Some(response)) => self.set_response(&response),
             Ok(None) => return false,
@@ -471,7 +473,11 @@ impl Connection {
         }
         // The identity is connection-owned, not supplied by a page cursor.
         // Mid-frame revocation closes the socket; the client discards partials.
-        if self.result_stream.as_ref().is_some_and(|stream| stream.check_reader().is_err()) {
+        if self
+            .result_stream
+            .as_ref()
+            .is_some_and(|stream| stream.check_reader().is_err())
+        {
             return false;
         }
         if self.output.is_none() {
@@ -503,13 +509,18 @@ impl Connection {
                                     match response {
                                         Ok(stream) => {
                                             self.result_stream = Some(stream);
-                                            if !self.advance_result() { return false; }
+                                            if !self.advance_result() {
+                                                return false;
+                                            }
                                         }
-                                        Err(error) => self.set_response(&results::WireResponse::Error(error.to_string())),
+                                        Err(error) => self.set_response(
+                                            &results::WireResponse::Error(error.to_string()),
+                                        ),
                                     }
                                 }
                                 Ok(Incoming::Message(request)) => {
-                                    let response = dispatch_authenticated(sender, token, request, owner);
+                                    let response =
+                                        dispatch_authenticated(sender, token, request, owner);
                                     self.set_response(&match response {
                                         Ok(reply) => WireResponse::Ok(reply),
                                         Err(error) => WireResponse::Error(error.to_string()),
@@ -540,7 +551,9 @@ impl Connection {
                     Ok(count) => {
                         self.written += count;
                         if self.written == total {
-                            if self.advance_result() { continue; }
+                            if self.advance_result() {
+                                continue;
+                            }
                             let _ = self.socket.shutdown(Shutdown::Both);
                             return false;
                         }

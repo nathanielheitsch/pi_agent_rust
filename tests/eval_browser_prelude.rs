@@ -20,7 +20,10 @@ impl ToolInvocationHost for Host {
     async fn call_tool(&self, call: ToolCall, expected_session: &str) -> Result<ToolOutput> {
         assert_eq!(expected_session, "browser-prelude-test");
         assert_eq!(call.name, "browser");
-        self.calls.lock().expect("fixture calls").push(call.arguments.clone());
+        self.calls
+            .lock()
+            .expect("fixture calls")
+            .push(call.arguments.clone());
         if !self.enabled.load(Ordering::SeqCst) {
             return Err(Error::tool("browser", "current browser policy denied"));
         }
@@ -59,10 +62,14 @@ fn tool(root: &std::path::Path) -> EvalTool {
 }
 
 fn text(output: &ToolOutput) -> String {
-    output.content.iter().filter_map(|block| match block {
-        ContentBlock::Text(block) => Some(block.text.as_str()),
-        _ => None,
-    }).collect()
+    output
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(block) => Some(block.text.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 async fn cell(tool: &EvalTool, host: &Host, code: &str) -> ToolOutput {
@@ -73,7 +80,9 @@ async fn cell(tool: &EvalTool, host: &Host, code: &str) -> ToolOutput {
         None,
         &protect,
         host,
-    ).await.expect("native eval outcome")
+    )
+    .await
+    .expect("native eval outcome")
 }
 
 #[test]
@@ -81,11 +90,15 @@ fn browser_helpers_are_installed_and_use_the_native_invocation_host() {
     let root = tempfile::tempdir().expect("tempdir");
     let tool = tool(root.path());
     let host = host();
-    let output = runtime().block_on(cell(&tool, &host, concat!(
-        "globalThis.page = await browser.open({name:'app',url:'https://example.test'});",
-        "await page.getByLabel('Email').fill('person@example.test');",
-        "const result = await page.snapshot(); JSON.stringify(result.details.request)",
-    )));
+    let output = runtime().block_on(cell(
+        &tool,
+        &host,
+        concat!(
+            "globalThis.page = await browser.open({name:'app',url:'https://example.test'});",
+            "await page.getByLabel('Email').fill('person@example.test');",
+            "const result = await page.snapshot(); JSON.stringify(result.details.request)",
+        ),
+    ));
     assert!(!output.is_error, "{}", text(&output));
     let calls = host.calls.lock().expect("calls");
     assert_eq!(calls.len(), 3);
@@ -93,7 +106,13 @@ fn browser_helpers_are_installed_and_use_the_native_invocation_host() {
     assert_eq!(calls[1]["selector"], "label/Email");
     assert_eq!(calls[2], json!({"action":"snapshot", "tab":"app"}));
     let details = output.details.expect("native details");
-    assert_eq!(details["toolCalls"]["calls"].as_array().expect("receipts").len(), 3);
+    assert_eq!(
+        details["toolCalls"]["calls"]
+            .as_array()
+            .expect("receipts")
+            .len(),
+        3
+    );
 }
 
 #[test]
@@ -102,8 +121,12 @@ fn retained_tab_handles_cannot_bypass_a_later_host_denial() {
     let tool = tool(root.path());
     let host = host();
     runtime().block_on(async {
-        let first = cell(&tool, &host,
-            "globalThis.page = browser.tab('app'); await page.snapshot()").await;
+        let first = cell(
+            &tool,
+            &host,
+            "globalThis.page = browser.tab('app'); await page.snapshot()",
+        )
+        .await;
         assert!(!first.is_error, "{}", text(&first));
         host.enabled.store(false, Ordering::SeqCst);
         let second = cell(&tool, &host, "await page.locator('#save').click()").await;
@@ -119,13 +142,17 @@ fn caught_browser_failure_keeps_partial_evidence_and_never_replays_input() {
     let tool = tool(root.path());
     let host = host();
     host.fail.store(true, Ordering::SeqCst);
-    let output = runtime().block_on(cell(&tool, &host, concat!(
-        "globalThis.evidence = null; try {",
-        "await browser.tab('app').batch([{call:{action:'click',selector:'#save'}}]);",
-        "await browser.tab('app').reload();",
-        "} catch (error) { evidence = {name:error.name, result:error.result}; }",
-        "JSON.stringify(evidence)",
-    )));
+    let output = runtime().block_on(cell(
+        &tool,
+        &host,
+        concat!(
+            "globalThis.evidence = null; try {",
+            "await browser.tab('app').batch([{call:{action:'click',selector:'#save'}}]);",
+            "await browser.tab('app').reload();",
+            "} catch (error) { evidence = {name:error.name, result:error.result}; }",
+            "JSON.stringify(evidence)",
+        ),
+    ));
     assert!(!output.is_error, "{}", text(&output));
     assert!(text(&output).contains("BrowserActionError"));
     assert!(text(&output).contains("completedSteps"));
@@ -138,11 +165,13 @@ fn caught_browser_failure_keeps_partial_evidence_and_never_replays_input() {
 fn standalone_eval_does_not_gain_browser_authority_from_the_prelude() {
     let root = tempfile::tempdir().expect("tempdir");
     let tool = tool(root.path());
-    let output = runtime().block_on(tool.execute(
-        "standalone-browser",
-        json!({"kernel":"js", "code":"await browser.tab('app').snapshot()"}),
-        None,
-    )).expect("native eval outcome");
+    let output = runtime()
+        .block_on(tool.execute(
+            "standalone-browser",
+            json!({"kernel":"js", "code":"await browser.tab('app').snapshot()"}),
+            None,
+        ))
+        .expect("native eval outcome");
     assert!(output.is_error);
     assert!(text(&output).contains("EVAL_BRIDGE_DENIED"));
 }

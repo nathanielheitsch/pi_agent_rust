@@ -341,9 +341,7 @@ fn dispatch_agent_event_to_ui(event: &AgentEvent, batcher: &mut UiStreamDeltaBat
             });
         }
         AgentEvent::AdvisorNote { level, rationale } => {
-            batcher.send_immediate(PiMsg::SystemNote(format!(
-                "[ADVISOR:{level}] {rationale}"
-            )));
+            batcher.send_immediate(PiMsg::SystemNote(format!("[ADVISOR:{level}] {rationale}")));
         }
         AgentEvent::MessageUpdate {
             assistant_message_event,
@@ -1235,7 +1233,11 @@ impl PiApp {
                 });
                 self.scroll_to_bottom();
             }
-            PiMsg::ReviewFinished { owner_session_id, request_id, message } => {
+            PiMsg::ReviewFinished {
+                owner_session_id,
+                request_id,
+                message,
+            } => {
                 if self.review_request_id.as_deref() != Some(request_id.as_str()) {
                     return None;
                 }
@@ -1247,13 +1249,20 @@ impl PiApp {
                     }
                     SessionEventOwnership::Busy => {
                         return self.retry_busy_session_event(
-                            PiMsg::ReviewFinished { owner_session_id, request_id, message },
+                            PiMsg::ReviewFinished {
+                                owner_session_id,
+                                request_id,
+                                message,
+                            },
                             attempts_remaining,
                         );
                     }
                 }
                 self.review_request_id = None;
-                return self.handle_pi_message_with_session_retry(PiMsg::System(message), attempts_remaining);
+                return self.handle_pi_message_with_session_retry(
+                    PiMsg::System(message),
+                    attempts_remaining,
+                );
             }
             PiMsg::SessionSystemNote {
                 owner_session_id,
@@ -5380,7 +5389,10 @@ mod stream_delta_batcher_tests {
             Some(ConversationMessage { role: MessageRole::System, content, .. })
                 if content == "[ADVISOR:CONCERN] The fixture omits Unicode input."
         ));
-        assert!(rx.try_recv().is_err(), "one emitted note has one display event");
+        assert!(
+            rx.try_recv().is_err(),
+            "one emitted note has one display event"
+        );
     }
 
     #[test]
@@ -5570,8 +5582,13 @@ mod stream_delta_batcher_tests {
         });
         assert_eq!(app.agent_state, AgentState::Idle); // ubs:ignore[rust.panic.assert-macros] -- A current owned completion must settle the review.
         assert!(app.review_request_id.is_none()); // ubs:ignore[rust.panic.assert-macros] -- Successful completion retires request ownership.
-        assert!(matches!(app.messages.last(), Some(ConversationMessage { content, .. }) if content == "current review report")); // ubs:ignore[rust.panic.assert-macros] -- Only the current review report may reach the transcript.
-        eprintln!("{}", serde_json::json!({"schema":"pi.review.test.v1","case":"classic_review_ownership","outcome":"stale completions ignored; current completion settles review"}));
+        assert!(
+            matches!(app.messages.last(), Some(ConversationMessage { content, .. }) if content == "current review report")
+        ); // ubs:ignore[rust.panic.assert-macros] -- Only the current review report may reach the transcript.
+        eprintln!(
+            "{}",
+            serde_json::json!({"schema":"pi.review.test.v1","case":"classic_review_ownership","outcome":"stale completions ignored; current completion settles review"})
+        );
     }
 
     #[test]

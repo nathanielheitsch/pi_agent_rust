@@ -253,7 +253,11 @@ fn reusable_native_prompt_preserves_wire_order_history_and_live_follow_up() {
         ])
     );
     assert_eq!(wire_users(&requests[1]).len(), 2);
-    assert!(wire_users(&requests[1])[1]["content"].to_string().contains("explain next"));
+    assert!(
+        wire_users(&requests[1])[1]["content"]
+            .to_string()
+            .contains("explain next")
+    );
 }
 
 #[test]

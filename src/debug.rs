@@ -167,9 +167,13 @@ impl DebugTool {
         }
         let terminal = input.run_in_terminal.unwrap_or(false);
         if terminal && !matches!(adapter.id.as_str(), "debugpy" | "lldb-dap") {
-            return Err(tool_err("DAP_UNSUPPORTED", "runInTerminal supports local debugpy and lldb-dap launches"));
+            return Err(tool_err(
+                "DAP_UNSUPPORTED",
+                "runInTerminal supports local debugpy and lldb-dap launches",
+            ));
         }
-        if program.as_ref().is_some_and(|path| path.is_dir()) && !selected.accepts_directory_program {
+        if program.as_ref().is_some_and(|path| path.is_dir()) && !selected.accepts_directory_program
+        {
             return Err(tool_err(
                 "DAP_USAGE",
                 "directory launch targets require an adapter that accepts directory programs",
@@ -267,7 +271,8 @@ impl DebugTool {
         }
         let go_mode = (adapter.id == "dlv" && program.is_some()).then(|| arguments["mode"].clone());
         let transport = if adapter.id == "dlv" {
-            dap::DapTransport::spawn_delve(&command, &adapter.adapter_args, &[], &working_directory).await?
+            dap::DapTransport::spawn_delve(&command, &adapter.adapter_args, &[], &working_directory)
+                .await?
         } else {
             dap::DapTransport::spawn(&command, &adapter.adapter_args, &[], &working_directory)?
         };
@@ -275,7 +280,8 @@ impl DebugTool {
             DapSession::begin_with_terminal(transport, &working_directory).await?
         } else {
             DapSession::begin(transport).await?
-        }.with_launch_artifacts(artifacts);
+        }
+        .with_launch_artifacts(artifacts);
         let timeout_ms = input.startup_timeout_ms.unwrap_or(120_000);
         session
             .start(
@@ -449,11 +455,20 @@ impl DebugTool {
                 session.invalidate_inspection()?;
                 json!({"command":command,"result":session.call(command,input.payload.clone().unwrap_or_else(||json!({}))).await?})
             }
-            "output" => json!({"tail":session.output_tail(),"execution":session.execution_snapshot()}),
-            "terminal_input" => session.terminal_input(
-                input.text.as_deref().ok_or_else(|| tool_err("DAP_USAGE", "terminal_input requires text"))?,
-                input.enter.unwrap_or(true),
-            ).await?,
+            "output" => {
+                json!({"tail":session.output_tail(),"execution":session.execution_snapshot()})
+            }
+            "terminal_input" => {
+                session
+                    .terminal_input(
+                        input
+                            .text
+                            .as_deref()
+                            .ok_or_else(|| tool_err("DAP_USAGE", "terminal_input requires text"))?,
+                        input.enter.unwrap_or(true),
+                    )
+                    .await?
+            }
             "terminate" | "disconnect" => {
                 let terminate = input.action == "terminate";
                 let result = session.disconnect(terminate).await;
@@ -929,12 +944,20 @@ impl DebugInput {
         }
         if self.action == "terminal_input" {
             if self.text.as_ref().is_none_or(|text| {
-                text.len() > 1024 || text.contains('\0') || (text.is_empty() && !self.enter.unwrap_or(true))
+                text.len() > 1024
+                    || text.contains('\0')
+                    || (text.is_empty() && !self.enter.unwrap_or(true))
             }) {
-                return Err(tool_err("DAP_USAGE", "terminal_input requires NUL-free text of at most 1024 UTF-8 bytes"));
+                return Err(tool_err(
+                    "DAP_USAGE",
+                    "terminal_input requires NUL-free text of at most 1024 UTF-8 bytes",
+                ));
             }
         } else if self.text.is_some() || self.enter.is_some() {
-            return Err(tool_err("DAP_USAGE", "text and enter are terminal_input-only"));
+            return Err(tool_err(
+                "DAP_USAGE",
+                "text and enter are terminal_input-only",
+            ));
         }
         if self
             .limit

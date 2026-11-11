@@ -609,27 +609,40 @@ mod tests {
                 "initializationOptions":{"initializationOnly":true},
                 "settings":{"analysis":{"old":true,"retained":false}}
             }}}
-        })).unwrap();
+        }))
+        .unwrap();
         let project: Config = serde_json::from_value(serde_json::json!({
             "lsp":{"servers":{"custom":{"settings":{"analysis":{"new":true}}}}}
-        })).unwrap();
+        }))
+        .unwrap();
         let config = Config::merge(global, project);
         let registry = LspRegistry::new(Path::new("."), Some(&config));
-        let spec = registry.spec_for_file(Path::new("source.custom")).expect("custom server retained");
+        let spec = registry
+            .spec_for_file(Path::new("source.custom"))
+            .expect("custom server retained");
         assert_eq!(spec.command, "configured-server");
         assert_eq!(spec.args, ["--stdio"]);
         assert_eq!(spec.env, [("LANG".to_string(), "C".to_string())]);
         assert_eq!(spec.languages, ["custom"]);
         assert_eq!(spec.root_markers, ["custom.project"]);
-        assert_eq!(spec.initialization_options, Some(serde_json::json!({"initializationOnly":true})));
-        assert_eq!(spec.settings, Some(serde_json::json!({"analysis":{"new":true}})));
+        assert_eq!(
+            spec.initialization_options,
+            Some(serde_json::json!({"initializationOnly":true}))
+        );
+        assert_eq!(
+            spec.settings,
+            Some(serde_json::json!({"analysis":{"new":true}}))
+        );
         assert_eq!(registry.request_timeout(), Duration::from_secs(45));
     }
 
     #[test]
     fn settings_omission_inherits_and_an_empty_object_replaces() {
         for (override_settings, expected) in [
-            (serde_json::json!({"args":[]}), serde_json::json!({"enabled":true})),
+            (
+                serde_json::json!({"args":[]}),
+                serde_json::json!({"enabled":true}),
+            ),
             (serde_json::json!({"settings":{}}), serde_json::json!({})),
         ] {
             let global: Config = serde_json::from_value(serde_json::json!({
@@ -637,17 +650,22 @@ mod tests {
                     "command":"/custom/rust-analyzer","args":["--log-file","ra.log"],
                     "settings":{"enabled":true}
                 }}}
-            })).unwrap();
+            }))
+            .unwrap();
             let project: Config = serde_json::from_value(serde_json::json!({
                 "lsp":{"servers":{"rust-analyzer":override_settings}}
-            })).unwrap();
+            }))
+            .unwrap();
             let config = Config::merge(global, project);
             let registry = LspRegistry::new(Path::new("."), Some(&config));
             let spec = registry.spec_for_file(Path::new("source.rs")).unwrap();
             assert_eq!(spec.command, "/custom/rust-analyzer");
             assert_eq!(spec.settings, Some(expected));
             if override_settings.get("args").is_some() {
-                assert!(spec.args.is_empty(), "an explicit empty argv replaces the inherited one");
+                assert!(
+                    spec.args.is_empty(),
+                    "an explicit empty argv replaces the inherited one"
+                );
             } else {
                 assert_eq!(spec.args, ["--log-file", "ra.log"]);
             }
@@ -663,16 +681,24 @@ mod tests {
         std::fs::create_dir_all(cwd.join(".pi")).unwrap();
         std::fs::write(global_dir.join("settings.json"),
             r#"{"lsp":{"servers":{"rust-analyzer":{"command":"/global/server","settings":{"source":"global"}}}}}"#).unwrap();
-        std::fs::write(cwd.join(".pi/settings.json"),
-            r#"{"lsp":{"servers":{"rust-analyzer":{"settings":{"source":"project"}}}}}"#).unwrap();
+        std::fs::write(
+            cwd.join(".pi/settings.json"),
+            r#"{"lsp":{"servers":{"rust-analyzer":{"settings":{"source":"project"}}}}}"#,
+        )
+        .unwrap();
         for trusted in [false, true] {
-            let config = Config::load_with_roots_and_project_trust(None, &global_dir, &cwd, trusted).unwrap();
+            let config =
+                Config::load_with_roots_and_project_trust(None, &global_dir, &cwd, trusted)
+                    .unwrap();
             let registry = LspRegistry::new(&cwd, Some(&config));
             let spec = registry.spec_for_file(Path::new("source.rs")).unwrap();
             assert_eq!(spec.command, "/global/server");
-            assert_eq!(spec.settings, Some(serde_json::json!({
-                "source":if trusted { "project" } else { "global" }
-            })));
+            assert_eq!(
+                spec.settings,
+                Some(serde_json::json!({
+                    "source":if trusted { "project" } else { "global" }
+                }))
+            );
         }
     }
 

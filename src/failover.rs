@@ -1114,9 +1114,7 @@ pub(crate) fn needs_context_compaction(
                 Some(message.usage.input),
             )
         }
-        TurnOutcome::Failed(error) if is_provider_call_error(error) => {
-            (error.to_string(), None)
-        }
+        TurnOutcome::Failed(error) if is_provider_call_error(error) => (error.to_string(), None),
         _ => return false,
     };
     let lower = error_text.to_ascii_lowercase();
@@ -2753,7 +2751,10 @@ mod tests {
         use crate::error::Error;
 
         let overflow = Error::api("context_length_exceeded: prompt is too long");
-        assert!(needs_context_compaction(TurnOutcome::Failed(&overflow), None));
+        assert!(needs_context_compaction(
+            TurnOutcome::Failed(&overflow),
+            None
+        ));
         for error in [
             Error::session("context_length_exceeded"),
             Error::Auth("context_length_exceeded".to_string()),
@@ -2771,7 +2772,10 @@ mod tests {
             TurnOutcome::Completed(&silent),
             Some(8_192),
         ));
-        assert!(!needs_context_compaction(TurnOutcome::Completed(&silent), None));
+        assert!(!needs_context_compaction(
+            TurnOutcome::Completed(&silent),
+            None
+        ));
         let payload = errored_message(Some("HTTP 413: payload rejected"), 8_193);
         assert!(needs_context_compaction(
             TurnOutcome::Completed(&payload),

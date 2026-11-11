@@ -453,11 +453,14 @@ impl ControllableSession {
         *active = Arc::downgrade(&run);
         drop(active);
         let fetcher_lifetime = Arc::new(());
-        self.session.session_mut().agent.register_scoped_message_fetchers(
-            &fetcher_lifetime,
-            Some(fetcher(&self.active, InputKind::Steering)),
-            Some(fetcher(&self.active, InputKind::FollowUp)),
-        );
+        self.session
+            .session_mut()
+            .agent
+            .register_scoped_message_fetchers(
+                &fetcher_lifetime,
+                Some(fetcher(&self.active, InputKind::Steering)),
+                Some(fetcher(&self.active, InputKind::FollowUp)),
+            );
         Ok((
             TurnGuard {
                 active: Arc::clone(&self.active),
@@ -539,9 +542,7 @@ impl ControllableSession {
             let _guard = guard;
             let callback = move |event| on_event(&callback_control, event);
             match content {
-                UserContent::Text(text) => {
-                    session.prompt_with_abort(text, signal, callback).await
-                }
+                UserContent::Text(text) => session.prompt_with_abort(text, signal, callback).await,
                 UserContent::Blocks(blocks) => {
                     session
                         .prompt_with_content_with_abort(blocks, signal, callback)

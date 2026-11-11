@@ -1584,7 +1584,8 @@ impl RpcTransportClient {
         objective: Option<&str>,
         token_budget: Option<u64>,
     ) -> Result<RpcGoalResult> {
-        self.goal_with_limits(op, objective, token_budget, None).await
+        self.goal_with_limits(op, objective, token_budget, None)
+            .await
     }
 
     /// `goal` with an optional native prompt-count budget.

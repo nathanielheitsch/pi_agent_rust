@@ -5261,8 +5261,7 @@ mod tests {
             "read-call",
         ));
         assert!(!overflow_compaction_preserves_current_turn(
-            &entries,
-            "missing",
+            &entries, "missing",
         ));
         assert!(prepare_overflow_compaction(&entries[2..], settings.clone()).is_none());
 

@@ -162,8 +162,7 @@ fn porcelain_paths_zero(status: &[u8]) -> Result<Vec<String>, String> {
         if path.is_empty() {
             return Err("empty path in git porcelain status".into());
         }
-        let renamed = matches!(record[0], b'R' | b'C')
-            || matches!(record[1], b'R' | b'C');
+        let renamed = matches!(record[0], b'R' | b'C') || matches!(record[1], b'R' | b'C');
         if renamed {
             let Some(original) = fields.next() else {
                 return Err("missing source path for git rename/copy".into());
@@ -191,16 +190,26 @@ pub fn commit(cwd: &Path, args: &str) -> Report {
         .any(|arg| arg == "--include-lockfiles");
 
     let status_out = match std::process::Command::new("git")
-        .args(["-c", "core.quotePath=false", "status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        .args([
+            "-c",
+            "core.quotePath=false",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        ])
         .current_dir(cwd)
         .env("GIT_OPTIONAL_LOCKS", "0")
         .output()
     {
         Ok(output) if output.status.success() => output,
-        Ok(output) => return Report::status(format!(
-            "Git status failed ({}): {}",
-            output.status, String::from_utf8_lossy(&output.stderr).trim()
-        )),
+        Ok(output) => {
+            return Report::status(format!(
+                "Git status failed ({}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
         Err(error) => return Report::status(format!("Failed to run git status: {error}")),
     };
     let changed_files = match porcelain_paths_zero(&status_out.stdout) {
@@ -214,21 +223,34 @@ pub fn commit(cwd: &Path, args: &str) -> Report {
     // A failed Git invocation or malformed diff is not an empty diff: falling
     // back to an empty hunk list could silently produce a misleading plan.
     let diff_out = match std::process::Command::new("git")
-        .args(["-c", "core.quotePath=false", "diff", "--no-ext-diff", "--no-textconv", "HEAD", "--"])
+        .args([
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "HEAD",
+            "--",
+        ])
         .current_dir(cwd)
         .env("GIT_OPTIONAL_LOCKS", "0")
         .output()
     {
         Ok(output) if output.status.success() => output,
-        Ok(output) => return Report::status(format!(
-            "Git diff failed ({}): {}",
-            output.status, String::from_utf8_lossy(&output.stderr).trim()
-        )),
+        Ok(output) => {
+            return Report::status(format!(
+                "Git diff failed ({}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
         Err(error) => return Report::status(format!("Failed to run git diff: {error}")),
     };
     let diff = match std::str::from_utf8(&diff_out.stdout) {
         Ok(diff) => diff,
-        Err(_) => return Report::status("Git diff is not UTF-8; refusing to plan an incomplete commit."),
+        Err(_) => {
+            return Report::status("Git diff is not UTF-8; refusing to plan an incomplete commit.");
+        }
     };
     let hunks = match crate::commit_split::DiffParser::parse_unified_diff(diff) {
         Ok(hunks) => hunks,
@@ -303,7 +325,10 @@ impl PreparedWorkspaceReview {
 }
 
 fn review_report(report: crate::review::ReviewReport) -> Report {
-    Report::card(report.format_markdown(), format!("{}: {}", report.verdict.badge(), report.summary))
+    Report::card(
+        report.format_markdown(),
+        format!("{}: {}", report.verdict.badge(), report.summary),
+    )
 }
 
 /// `/review [--offline] [target]`: prepare a model review, or explicitly request
@@ -318,7 +343,9 @@ pub fn prepare_review(
     let offline = first == "--offline";
     let target = if offline { rest.trim() } else { args };
     if target.starts_with('-') {
-        return Err(crate::error::Error::validation("Usage: /review [--offline] [uncommitted|staged|commit:REF|branch:REF|RANGE]"));
+        return Err(crate::error::Error::validation(
+            "Usage: /review [--offline] [uncommitted|staged|commit:REF|branch:REF|RANGE]",
+        ));
     }
     let options = crate::review::ReviewOptions {
         target: (!target.is_empty()).then(|| target.to_string()),
@@ -330,7 +357,8 @@ pub fn prepare_review(
     };
     if offline {
         return crate::review::CodeReviewer::review(cwd, &options)
-            .map(review_report).map(PreparedWorkspaceReview::Offline);
+            .map(review_report)
+            .map(PreparedWorkspaceReview::Offline);
     }
     let client = crate::review::ModelReviewer::for_agent(agent);
     let request = client.prepare_with_agent(cwd, &options, agent)?;
@@ -639,7 +667,12 @@ mod tests {
         let bytes = b" M leading space.txt\0?? weird -> literal.txt\0R  new name.rs\0old name.rs\0 C other.rs\0old copy.rs\0";
         assert_eq!(
             porcelain_paths_zero(bytes).unwrap(),
-            ["leading space.txt", "weird -> literal.txt", "new name.rs", "other.rs"]
+            [
+                "leading space.txt",
+                "weird -> literal.txt",
+                "new name.rs",
+                "other.rs"
+            ]
         );
         assert_eq!(
             porcelain_paths_zero(b"??  leading.txt\0").unwrap(),
