@@ -166,7 +166,9 @@ fn configured_launch_preserves_target_arguments_and_configures_before_execution(
         request(&wire, "initialize")["arguments"]["supportsRunInTerminalRequest"],
         false
     );
-    call(&tool, &runtime, json!({"action":"disconnect"})).unwrap();
+    // Launch origin: `disconnect` is refused by design (docs/tools/debug.md),
+    // so reaping the Pi-launched adapter goes through `terminate`.
+    call(&tool, &runtime, json!({"action":"terminate"})).unwrap();
     assert_adapter_reaped(root.path());
     event("configured_launch", "verified");
 }

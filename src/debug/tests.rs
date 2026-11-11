@@ -201,11 +201,17 @@ fn explicit_cwd_controls_target_breakpoints_adapter_process_and_launch_wire() {
             .display()
             .to_string()
     );
-    run(&tool, &runtime, json!({"action":"disconnect"})).unwrap();
-    assert!(
-        nested.join("disconnect.json").is_file(),
-        "adapter process did not inherit the explicit cwd"
-    );
+    // A Pi-launched target must be terminated, not preserved: a launch-origin
+    // `disconnect` is refused by design (docs/tools/debug.md). `terminate`
+    // reaches the adapter as disconnect{terminateDebuggee:true}, which is what
+    // this cwd-inheritance assertion rides on.
+    run(&tool, &runtime, json!({"action":"terminate"})).unwrap();
+    let terminate: Value = serde_json::from_slice(
+        &std::fs::read(nested.join("disconnect.json"))
+            .expect("adapter did not inherit the explicit cwd"),
+    )
+    .unwrap();
+    assert_eq!(terminate["terminateDebuggee"], true);
 }
 
 #[test]

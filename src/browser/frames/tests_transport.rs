@@ -353,13 +353,23 @@ fn serve(socket: &mut TcpStream, fault: Fault) -> Observed {
             }
             "Runtime.callFunctionOn" => {
                 assert_eq!(session, "nested-session");
-                if params["functionDeclaration"]
-                    .as_str()
-                    .unwrap()
-                    .contains("Document.prototype.querySelector")
-                {
+                let declaration = params["functionDeclaration"].as_str().unwrap().to_owned();
+                if declaration.contains("Document.prototype.querySelector") {
                     assert_eq!(params["executionContextId"], 7);
                     json!({"result":{"type":"object","objectId":"field-handle"}})
+                } else if declaration.contains("BROWSER_WAIT_STALE") {
+                    // wait.js probe: wait.rs deserializes an Observation, so a
+                    // plain boolean is rejected as an invalid DOM observation.
+                    assert_eq!(params["objectId"], "field-handle");
+                    let wants_text = params["arguments"][0]["value"]["text"].is_string();
+                    json!({"result": {
+                        "type": "object",
+                        "value": {
+                            "attached": true,
+                            "visible": true,
+                            "textMatches": if wants_text { Some(true) } else { None },
+                        }
+                    }})
                 } else {
                     assert_eq!(params["objectId"], "field-handle");
                     let result = if params["arguments"][0]["value"] == "verify_fill" {

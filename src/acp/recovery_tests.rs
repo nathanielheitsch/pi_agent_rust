@@ -860,7 +860,7 @@ fn launch_scope_uses_the_requested_workspace_and_preserves_scoped_effort() {
         );
         options.config.enabled_models = Some(vec![format!("{FALLBACK_PROVIDER}/{FALLBACK_MODEL}")]);
         options.config.model_scope_overrides = Some(vec![crate::config::ModelScopeOverride {
-            path: project.path().display().to_string(),
+            path: project.path().canonicalize().unwrap().display().to_string(),
             enabled_models: Some(vec![format!("{PRIMARY_PROVIDER}/{PRIMARY_MODEL}:low")]),
             disabled_providers: None,
         }]);

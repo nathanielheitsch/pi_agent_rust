@@ -785,7 +785,10 @@ mod tests {
             .unwrap();
         let dir = tempfile::tempdir().unwrap();
         let args = json!({"action":"screenshot","output_path":"capture.png"});
-        let helpers = BTreeMap::from([("swift".to_string(), PathBuf::from("/bin/false"))]);
+        // macOS ships `false` at /usr/bin/false and has no /bin/false, so a
+        // /bin/false fixture fails at spawn (ENOENT) and never reaches the
+        // non-zero-exit path this test is about.
+        let helpers = BTreeMap::from([("swift".to_string(), PathBuf::from("/usr/bin/false"))]);
         let failure = runtime.block_on(async {
             execute(
                 &AgentCx::for_current_or_request(),
@@ -796,7 +799,10 @@ mod tests {
             .await
             .unwrap_err()
         });
-        assert!(failure.to_string().contains("desktop helper swift failed"));
+        assert!(
+            failure.to_string().contains("desktop helper swift failed"),
+            "actual failure: {failure}"
+        );
         assert!(!dir.path().join("capture.png").exists());
     }
 
@@ -1106,7 +1112,7 @@ mod tests {
             .build()
             .unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let helpers = BTreeMap::from([("swift".to_string(), PathBuf::from("/bin/false"))]);
+        let helpers = BTreeMap::from([("swift".to_string(), PathBuf::from("/usr/bin/false"))]);
         let failure = runtime.block_on(async {
             super::super::execute(
                 &AgentCx::for_current_or_request(),
@@ -1118,6 +1124,9 @@ mod tests {
             .await
             .unwrap_err()
         });
-        assert!(failure.to_string().contains("desktop helper swift failed"));
+        assert!(
+            failure.to_string().contains("desktop helper swift failed"),
+            "actual failure: {failure}"
+        );
     }
 }
