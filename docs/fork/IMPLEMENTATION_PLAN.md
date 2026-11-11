@@ -268,23 +268,27 @@ the final implementation. The phase sequence remains 0A safe local gaps, 0B defe
 gaps in their owning phases, 1 presentation, 2 orchestration/MCP, 3 fold/distill,
 4 cross-session peers, and 5 retirement of the TS implementations.
 
-Planning is committed. Phase 0A is partially implemented and unverified. Phases 1–5
-have not been implemented by this branch's fork work.
+Planning is committed. Phase 0A is partially implemented: its wired rows now EXECUTE and
+pass (see the 2026-11-11 session below), but the suite is not green overall and no DSR
+approval exists. Phases 1–5 have not been implemented by this branch's fork work.
 
 ### Implementation present in the checkpoint
 
 - `src/extensions_js.rs`: optional `promptSnippet`/`promptGuidelines` metadata,
   bridge forwarding, and regression coverage. Consumption by the system prompt is
   still deferred; forwarding alone does not deliver the full behavior.
-- `src/config.rs` and `src/tools.rs`: hashline settings, layered merge/clamping,
-  tool wiring, and merge tests. Runtime behavior and settings round trips have not
-  passed execution tests.
+- `src/config.rs` and `src/tools.rs`: hashline settings, layered merge/clamping, tool
+  wiring, and merge tests. **Updated 2026-11-11:** `hashline.grep` is wired into `read`/
+  `grep` and its round-trip tests execute (`d1431abd9`, 30/30); `hashline.replace_text`
+  is still an unwired dead accessor pending ask A6.
 - `src/bash_mediation.rs`: plan-mode command classes for git mutation, output
   redirection, and mutating pipeline targets, plus tests. These are not evidence
   that shell parsing or the end-to-end planning gate is complete or secure.
-- `src/config.rs`: MCP timeout settings slot and merge/clamping tests. End-to-end
-  consumption is NOT established: `src/mcp/manager.rs` has no checkpoint diff;
-  earlier conversation claims that this file wired the setting are unverified.
+- `src/config.rs`: MCP timeout settings slot and merge/clamping tests. **Updated
+  2026-11-11:** end-to-end consumption IS established — `McpManager::timeout_for`
+  (`src/mcp/manager.rs:400`) is the single precedence point, and `mcp::manager` passes
+  179/179. The statement below was true at checkpoint time and is superseded by
+  `c0ca9edcf`/`2eca5767f`.
 - Compile-repair edits span eval I/O/error handling, digest encoding, MCP atomics,
   session-control duplicate method removal, URL handling, and interactive review
   dispatch. These support development but are not new extension-port completion.
@@ -297,7 +301,12 @@ have not been implemented by this branch's fork work.
 - `.gitignore` ignores crew runtime state. The checkpoint does not include crew
   runtime artifacts or temporary compiler logs.
 
-### Critical known regression: model review is stubbed
+### Critical known regression (RESOLVED 2026-11-11): model review was stubbed
+
+> **Status:** resolved. `grep -rn bisect3 src/` returns 0. `PreparedWorkspaceReview::run`
+> now calls `ModelReviewer::review_prepared_owned(client.handles(), request, abort)`
+> (`src/interactive/workspace_reports.rs:322`) and the `review::` suite executes green
+> (59/59). The text below is retained as the checkpoint-time record.
 
 `PreparedWorkspaceReview::run` in `src/interactive/workspace_reports.rs` currently
 returns `Report::status("bisect3")` for its model branch instead of invoking
@@ -315,12 +324,14 @@ lifetime/Send error; never retain this stub as a compilation fix.
   stub invalidates the earlier claim that the real review path compiled correctly.
 - The last recorded full lib-test build before the LSP edits failed with **43
   compiler errors and 5 warnings**, exit 101 (`/tmp/p0a_t7.txt` in that session).
-  Tests did not execute. This count is NOT a fresh measurement of this checkpoint.
+  Tests did not execute. **Superseded 2026-11-11:** the target now compiles and
+  executes (`6a6e28dbe`); see the 2026-11-11 session below.
 - Reported error families: LSP URI versus PathBuf keys and request-handler API
   drift; missing FIFO functions on this platform; stale agent compaction/test
   APIs; SDK tool/message types; eval bridge arguments, result inference, and digest
-  formatting. Many sites were unchanged from HEAD, but no clean baseline build
-  proved that every remaining error was pre-existing. Do not label them all baseline.
+  formatting. **Superseded 2026-11-11:** all of these are resolved, and the
+  reproduction was done in a worktree at the pre-merge checkpoint, so each remaining
+  test failure is confirmed pre-existing rather than caused by Phase 0A.
 - The Phase 0A config/bash/bridge files disappeared from the compiler diagnostic
   list after local test-source fixes. That does not prove their tests pass.
 - `dsr quality --tool pi_agent_rust` was attempted at checkpoint preparation and
@@ -335,8 +346,9 @@ lifetime/Send error; never retain this stub as a compilation fix.
 
 Two Phase 0A rows now have a real consumer, each in its own commit on
 `issue/main-12j9w`. Evidence is pinned-nightly Cargo diagnostics only: **`dsr` is not
-installed on this machine**, so nothing here is quality approval, and no test
-EXECUTED because the lib-test target does not compile at HEAD.
+installed on this machine**, so nothing here is quality approval. (The claim recorded
+here that no test EXECUTED because the lib-test target does not compile was true at the
+time and has since been fixed — see the 2026-11-11 session below.)
 
 - **Gap 2.3 MCP settings slot — consumed** (`c0ca9edcf`). The slot previously had no
   reader outside `src/config.rs`, so every server without a per-entry `timeout`
@@ -353,12 +365,12 @@ EXECUTED because the lib-test target does not compile at HEAD.
   generation. Guidance is collected only for tools that reach the schema and appends
   to an existing prompt only, so an unpromoted tool is never advertised and a session
   with no system prompt does not acquire one.
-- **Still unconsumed, deliberately** — `hashline.grep` and `hashline.replace_text`
-  (ask **A6** is open on how far to wire them); and the plan-mode classifier
-  `plan_mode_classes` is still called only by its own tests, so gaps 3.1/3.2 remain
-  open. The mode gate itself works at tool-effect level (`allows_effects` blocks
-  write/append/process under Planning); the classifier-vs-effect redundancy is
-  recorded under Validation below rather than wired.
+- **Still unconsumed, deliberately** — `hashline.replace_text` (ask **A6** is open on how
+  far to wire them; `hashline.grep` was subsequently wired — see the 2026-11-11 session);
+  and the plan-mode classifier `plan_mode_classes` is still called only by its own tests,
+  so gaps 3.1/3.2 remain open. The mode gate itself works at tool-effect level
+  (`allows_effects` blocks write/append/process under Planning); the classifier-vs-effect
+  redundancy is recorded under Validation below rather than wired.
 
 ### Validation added this session (and its limits)
 
@@ -367,7 +379,8 @@ EXECUTED because the lib-test target does not compile at HEAD.
   (22 errors both; an empty diff between the sorted sets). HEAD baseline measured by
   stashing this work in the same target directory, so 22 is pre-existing, not caused
   by these commits. The lib-test target remains blocked by that baseline, so the two
-  new tests cannot execute yet and **no test pass is claimed**.
+  new tests cannot execute yet and **no test pass is claimed**. **Superseded 2026-11-11:**
+  those 22 errors are resolved and the tests execute.
 - Added lines are `rustfmt`-clean; the pre-existing diff in those files is untouched.
 - `scripts/check_module_reachability.py`: 152 declared, 149 reachable, 3 allowlisted,
   0 unreachable.
@@ -375,14 +388,59 @@ EXECUTED because the lib-test target does not compile at HEAD.
   `772e8275a` with cancellation and the privacy check intact.
 - Not yet run: Clippy, UBS, conformance, integration, and authoritative DSR quality.
 
-### Resume order (updated 2026-11-10)
+### Session 2026-11-11 — lib-test target unblocked, origin/main merged, docs corrected
+
+All claims below are measured on `issue/main-12j9w` at `c0d7fcf7c` with the pinned
+nightly (`nightly-2026-08-31`), and are Cargo evidence only — `dsr` remains uninstalled,
+so nothing here is quality approval.
+
+- **Lib-test target compiles.** The 22 pre-existing baseline errors (FIFO helpers,
+  `LowerHex` on bitptr arrays, stale test-side APIs, LSP URI-vs-PathBuf keys, the
+  request-handler type) are resolved by `6a6e28dbe`. `cargo check --locked --all-targets
+  --keep-going` reports **0 error sites**; module reachability is 152 declared / 149
+  reachable / 3 allowlisted / 0 unreachable.
+- **Tests execute, but the suite is not green.** Two full `cargo test --locked --lib`
+  runs (default threads, `PI_*` env unset so the suite does not measure this agent's own
+  session): run 1 logged 2986 ok / 78 FAILED, run 2 logged 3024 ok / 38 FAILED. Neither
+  printed a `test result` line — the test binary aborts with `SIGTRAP` partway, so
+  neither count is a clean total and the two runs disagree: 35 tests failed in BOTH, 43
+  only in run 1, 3 only in run 2. `app::tests` (42 of run 1's failures) passes 125/125
+  under `--test-threads=1`, so those are concurrency artifacts rather than defects. The
+  set that fails in both runs is concentrated in `browser::session::tests::native*` (13),
+  `eval::js_kernel::modules*` (10), `debug::` (5), `computer::native::macos::tests` (2),
+  `agent_hub::ipc::results::tests` (1), and `acp::recovery_tests` (1). The SIGTRAP abort
+  is itself an open defect. The Phase 0A areas themselves pass: `mcp::manager` 179/179,
+  `extensions::` 909/909, `review::` 59/59, `advisor::` 30/30, `hashline` 30/30,
+  `lsp::jsonrpc` 48/48, `app::tests` 125/125 single-threaded. Separately
+  `lsp::client::workspace` reports 9/33 failures on a 5s `test/frames` timeout even in
+  isolation.
+- **`origin/main` is merged** (`c0d7fcf7c`), 298 files. Eleven conflicts were resolved by
+  semantic currency rather than by branch: the owned-signal review/advisor path
+  (`abort.cloned()`, `review_prepared_owned`) and the `Message::ToolResult(Arc<..>)` +
+  `spawn_blocking` forms are the ones that compile; `origin/main`'s variants do not.
+  Note that `origin/main`'s own lib-test target does not compile (74 errors), so there is
+  no green upstream baseline to compare against.
+- **Gap 6.1 `hashline.grep` is wired and executing** (`d1431abd9`): the settings default
+  tags `read` and `grep` output without a per-call flag, with round-trip tests.
+  `hashline.replace_text` remains unwired (dead accessor) pending ask A6.
+- **Gaps 3.1/3.2 remain open.** `plan_mode_classes` (`src/bash_mediation.rs:436`) is still
+  called only by its own tests.
+- **Cleanup:** every branch that existed (`diag/main-p0a-baseline`, the scratch
+  tree-wide-rustfmt branch) is now an ancestor of `HEAD` or verified superseded; the
+  scratch tip is kept as tag `fork-scratch-superseded-81413176d`, and its only unique
+  content was stale claims about the review path and the pre-owned-signal review code.
+  Baseline-reproduction worktrees were removed. No file was deleted (Rule 1).
+
+### Resume order (updated 2026-11-11 — supersedes the 2026-11-10 section below)
 
 1. Obtain the DSR entry point and run the authoritative recipe; it is the only thing
-   that can turn the diagnostics above into an approval claim.
-2. Unblock the lib-test target (the 22 baseline errors: platform-gated FIFO helpers,
-   `LowerHex` on bitptr arrays, stale test-side APIs). Until then no Phase 0A test
-   executes, and Phase 0A stays open.
-3. Resolve ask A6, then wire or remove `hashline.grep`/`hashline.replace_text`.
+   that can turn the diagnostics above into an approval claim. `dsr`, `br`, `ubs`, and
+   `am` are all absent from PATH on this machine.
+2. Diagnose the `SIGTRAP` abort in the lib-test binary and the tests that fail in BOTH
+   full runs (`browser::session::tests::native*`, `eval::js_kernel::modules*`, `debug::`,
+   `computer::native::macos`, `agent_hub::ipc::results::tests`, `acp::recovery_tests`).
+   Until the suite runs to completion and is green, no Phase 0A acceptance claim exists.
+3. Resolve ask A6, then wire or remove `hashline.replace_text`.
 4. Decide gaps 3.1/3.2: either route `plan_mode_classes` into the bash path for
    per-command read-only messaging, or record why tool-effect-level blocking is
    sufficient and retire the classifier as dead code.

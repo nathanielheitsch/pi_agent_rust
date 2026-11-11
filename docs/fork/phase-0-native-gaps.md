@@ -133,8 +133,9 @@ marked UNVERIFIED and must not be used as a fix target until re-checked.
   on every request path, including the four `HttpTransport` internal paths
   (session renewal, notifications, server-response delivery, event-stream headers)
   that the first commit left on the compiled default.
-  Not quality-approved: `dsr` is unavailable and the lib-test target does not compile
-  at HEAD, so the precedence test has not executed.
+  Not quality-approved: `dsr` is unavailable. **Updated 2026-11-11:** the lib-test target
+  now compiles (`6a6e28dbe`) and the precedence test executes green (`mcp::manager`
+  179/179); DSR approval still does not exist.
 
 - **Evidence:** `grep -n 'pub mcp' src/config.rs` returned **0**, while browser has
   `src/config.rs:105` `pub browser: Option<crate::browser::BrowserSettings>` merged by
@@ -221,6 +222,12 @@ marked UNVERIFIED and must not be used as a fix target until re-checked.
 
 ## Gap 6.1 — no hashline default settings (pi-hashline-edit)
 
+- **Status (2026-11-11):** partially closed. `pub hashline: Option<HashlineSettings>`
+  (`src/config.rs:117`) exists with `merge_hashline`, and `hashline.grep` is wired as a
+  settings default for `read`/`grep` via `hashline_effective` (`src/tools.rs:6616`) and
+  executes green (`d1431abd9`, hashline suite 30/30). `hashline.replace_text` is parsed
+  and clamped but has no runtime consumer yet — that half stays open pending ask A6.
+  The evidence line below predates those commits.
 - **Evidence:** `grep -c -i hashline src/config.rs` = **0**. Native side is present:
   essential tier `src/xdev.rs:67`, `KNOWN_TOOL_NAMES` `src/tools.rs:5709`,
   registry arm `src/tools.rs:5822-5826` (`HashlineEditTool::new(cwd)`), opt-in schema

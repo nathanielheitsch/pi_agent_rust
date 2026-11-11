@@ -1,11 +1,13 @@
 # Fork plan: hardbake the user's TS pi extensions into the Rust port
 
-> **Current status:** Phase 0A is partially landed and not quality-approved. Two gaps
-> are closed end-to-end (`c0ca9edcf` MCP settings timeout, `74fa82820` extension prompt
-> guidance, corrected by `2eca5767f`); hashline and plan-mode gaps remain open.
+> **Current status (2026-11-11):** Phase 0A is partially landed and not quality-approved.
+> Two gaps are closed end-to-end (`c0ca9edcf` MCP settings timeout, `74fa82820` extension
+> prompt guidance, corrected by `2eca5767f`); `hashline.grep` is wired and executing
+> (`d1431abd9`), `hashline.replace_text` and the plan-mode gaps remain open.
 > See [branch progress and resume notes](IMPLEMENTATION_PLAN.md#6-branch-checkpoint--incomplete-implementation).
-> The model-review stub was removed in `772e8275a`. No test has executed: the lib-test
-> target does not compile at HEAD, and `dsr` is not installed on this machine.
+> The model-review stub was removed in `772e8275a`. The lib-test target now compiles
+> (`6a6e28dbe`) and tests execute; `origin/main` was merged in (`c0d7fcf7c`). `dsr` is
+> still not installed on this machine, so no authoritative quality approval exists.
 > The A/B/C options below are historical exploration: the current plan ports all
 > fifteen extensions to native Rust, without dropping capabilities.
 
