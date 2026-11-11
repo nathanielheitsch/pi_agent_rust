@@ -542,7 +542,15 @@ fn public_python_and_javascript_cells_retain_results_and_report_native_receipts(
                 .await
                 .unwrap();
             assert!(!output.is_error, "{}", text(&output));
-            assert_eq!(text(&output).trim(), "2");
+            // First cell on a fresh kernel gets the display banner
+            // (`src/eval/display.rs:222`, restarted && cells_run == 1); the
+            // batch feature predates that banner, so the expectation carries it.
+            let banner = if kernel == "js" {
+                "(js kernel started)\n"
+            } else {
+                "(kernel started)\n"
+            };
+            assert_eq!(text(&output).trim(), format!("{banner}2"));
             let details = output.details.unwrap();
             let receipts = details["judgments"]["attempts"].as_array().unwrap();
             assert_eq!(receipts.len(), 3);

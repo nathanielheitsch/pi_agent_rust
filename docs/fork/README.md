@@ -6,8 +6,14 @@
 > (`d1431abd9`), `hashline.replace_text` and the plan-mode gaps remain open.
 > See [branch progress and resume notes](IMPLEMENTATION_PLAN.md#6-branch-checkpoint--incomplete-implementation).
 > The model-review stub was removed in `772e8275a`. The lib-test target now compiles
-> (`6a6e28dbe`) and tests execute; `origin/main` was merged in (`c0d7fcf7c`). `dsr` is
-> still not installed on this machine, so no authoritative quality approval exists.
+> (`6a6e28dbe`) and tests execute; `origin/main` was merged in (`c0d7fcf7c`). `dsr` 0.2.3
+> IS installed (`~/.local/bin/dsr`) — that earlier claim was stale — but no authoritative
+> quality approval exists yet: its compile/check/clippy/test lanes all refuse with exit 103
+> because the recipe sets `RCH_REQUIRE_REMOTE=1` on a host with no RCH daemon, a placeholder
+> worker, and no `/data/projects` canonical root (`bd-rch-dsr-remote-refusal-hcjgg`). The
+> lib-test abort is now diagnosed as QuickJS heap corruption on the `eval-js-kernel` thread
+> rather than ~35 flaky tests (`bd-p0a-sigtrap-4pqc0`); the failure list was a crash-cutoff
+> artifact.
 > The A/B/C options below are historical exploration: the current plan ports all
 > fifteen extensions to native Rust, without dropping capabilities.
 

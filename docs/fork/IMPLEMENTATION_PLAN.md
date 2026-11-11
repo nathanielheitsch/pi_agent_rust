@@ -431,21 +431,49 @@ so nothing here is quality approval.
   content was stale claims about the review path and the pre-owned-signal review code.
   Baseline-reproduction worktrees were removed. No file was deleted (Rule 1).
 
-### Resume order (updated 2026-11-11 — supersedes the 2026-11-10 section below)
+### Resume order (updated 2026-11-11, second pass — supersedes the section above)
 
-1. Obtain the DSR entry point and run the authoritative recipe; it is the only thing
-   that can turn the diagnostics above into an approval claim. `dsr`, `br`, `ubs`, and
-   `am` are all absent from PATH on this machine.
-2. Diagnose the `SIGTRAP` abort in the lib-test binary and the tests that fail in BOTH
-   full runs (`browser::session::tests::native*`, `eval::js_kernel::modules*`, `debug::`,
-   `computer::native::macos`, `agent_hub::ipc::results::tests`, `acp::recovery_tests`).
-   Until the suite runs to completion and is green, no Phase 0A acceptance claim exists.
-3. Resolve ask A6, then wire or remove `hashline.replace_text`.
-4. Decide gaps 3.1/3.2: either route `plan_mode_classes` into the bash path for
-   per-command read-only messaging, or record why tool-effect-level blocking is
-   sufficient and retire the classifier as dead code.
-5. Fresh review of the complete Phase 0A diff, then Phase 1 presentation (S4 renderer
-   must precede distill entry rendering and crew panel UI).
+1. **Fix the RCH transport so DSR can actually run.** Every compile/check/clippy/test lane
+   refuses with exit 103: `RCH_REQUIRE_REMOTE=1` plus a daemonless host — no daemon socket
+   at `~/Library/Caches/rch/rch.sock`, `workers.toml` still holds the placeholder
+   `192.168.1.100/ubuntu` worker, and the canonical root `/data/projects` does not exist on
+   this darwin host (RCH suggests `[path_topology] canonical_root` or
+   `RCH_CANONICAL_PROJECT_ROOT`). Tracked as `bd-rch-dsr-remote-refusal-hcjgg`. Until a
+   lane executes, `dsr quality` cannot produce an approval claim; the two checks that
+   *did* execute (`installer_regression.sh`, `check_module_reachability.py`) passed.
+2. **Fix the lib-test abort — it is heap corruption in QuickJS, not 35 flaky tests**
+   (`bd-p0a-sigtrap-4pqc0`). With `PI_*` scrubbed and `RUST_MIN_STACK=16777216`, the
+   process dies mid-suite on the `eval-js-kernel` thread at the
+   `eval::judgment::background` boundary with no libtest tally; macOS
+   DiagnosticReports show `EXC_BREAKPOINT` in `_xzm_xzone_malloc_freelist_outlined <-
+   js_def_calloc <- js_calloc_rt <- js_mallocz <- js_create_function <-
+   __JS_EvalInternal <- rquickjs `Ctx::eval_raw` <-
+   `eval::js_kernel::async_host::AsyncHost::install` <- `JsKernel::spawn_in`
+   (rquickjs 0.12.2). Consequently the earlier ~35-failure list is a **crash-cutoff
+   artifact**: `app::tests` passes 125/125 and `eval::judgment::background` passes 24/24
+   in isolation. Needs a dedicated reproducer around kernel teardown/realm lifetime.
+3. **Fix the nonblocking-fixture reads.** Accepted sockets inherit the listener's
+   nonblocking flag, so `set_read_timeout` never applies on macOS and fixtures fail with
+   `WouldBlock` (os error 35). `tests/debug_attach.rs` is fixed here
+   (`set_nonblocking(false)` + 30 s patience, `check_fixture_read_patience.py` exit 0,
+   120/120 green); `src/debug/dap/connect.rs:196` and
+   `src/browser/session/tests/native.rs:75` still need the same treatment.
+4. **Fix the module-authority defect.**
+   `eval::js_kernel::modules::tests::admission_checks_the_active_owner_before_any_file_work
+   ` fails when run alone (`--exact`, `--test-threads=1`): `resolve_path("./missing.js")`
+   after a second `begin()` returns no `DENIED`. Real logic defect, unrelated to the crash.
+5. Resolve ask A6, then wire or remove `hashline.replace_text`
+   (`bd-p0a-hashline-replace-text-ej6bm`).
+6. Decide gaps 3.1/3.2: route `plan_mode_classes` into the bash path for per-command
+   read-only messaging, or record why tool-effect-level blocking is sufficient and retire
+   the classifier (`bd-p0a-plan-mode-classes-ppfs1`).
+7. Fresh review of the complete Phase 0A diff (`bd-p0a-acceptance-y2rb6`), then a green
+   `dsr quality --tool pi_agent_rust`, then Phase 1 presentation (S4 renderer must precede
+   distill entry rendering and crew panel UI).
+
+> Correction to item 1 of the previous version: `dsr` (0.2.3), `br`, `ubs`, `rch`, and `am`
+> ARE on PATH on this machine; the claim that they were absent is stale. The blocker is the
+> RCH remote-only refusal, not a missing `dsr` binary.
 
 ### Resume order — superseded by the 2026-11-10 section above
 

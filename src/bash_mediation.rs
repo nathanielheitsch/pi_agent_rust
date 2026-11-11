@@ -118,7 +118,7 @@ pub fn pty_required(command: &str) -> bool {
 
 use std::path::Path;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::config::BashSettings;
 

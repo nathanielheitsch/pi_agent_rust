@@ -1286,12 +1286,10 @@ impl McpManager {
                     &workspace,
                 )?;
                 ensure_active()?;
-                return Ok(
-                    Box::new(
-                        super::transport::HttpTransport::new(&url, headers)?
-                            .with_request_timeout(request_timeout),
-                    ) as Box<dyn McpTransport>,
-                );
+                return Ok(Box::new(
+                    super::transport::HttpTransport::new(&url, headers)?
+                        .with_request_timeout(request_timeout),
+                ) as Box<dyn McpTransport>);
             }
             let command = config.command.clone().ok_or_else(|| {
                 tool_err(
@@ -2440,7 +2438,8 @@ mod tests {
         // Clones share the installed fallback through the shared inner Arc, so the
         // fallback is installed once rather than per handle.
         let shared = Arc::new(
-            McpManager::new(&cwd, &global, servers("plain", None)).with_default_timeout(Some(45_000)),
+            McpManager::new(&cwd, &global, servers("plain", None))
+                .with_default_timeout(Some(45_000)),
         );
         assert_eq!(
             shared.timeout_for(&shared.entry("plain").expect("plain entry")),

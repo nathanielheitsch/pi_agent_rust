@@ -111,11 +111,16 @@ fn peer(reject_attach: bool) -> (u16, std::thread::JoinHandle<Vec<Value>>) {
                 Err(error) => panic!("accept: {error}"),
             }
         };
+        // The listener was set nonblocking and the accepted stream inherits
+        // that flag; on macOS a nonblocking socket returns WouldBlock from
+        // read regardless of any read timeout, so restore blocking mode
+        // before setting the patience timeout.
+        stream.set_nonblocking(false).unwrap();
         stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
+            .set_read_timeout(Some(Duration::from_secs(30)))
             .unwrap();
         stream
-            .set_write_timeout(Some(Duration::from_secs(5)))
+            .set_write_timeout(Some(Duration::from_secs(30)))
             .unwrap();
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut sequence = 0;
