@@ -103,6 +103,41 @@ fn async_looking_literals_and_nested_functions_remain_scripts() {
 }
 
 #[test]
+fn top_level_await_reports_its_completion_value_not_the_grammar_wrapper() {
+    let kernel = JsKernel::spawn().unwrap();
+    succeeds(&kernel, "globalThis.side = 0");
+    // Async-grammar cells must serialize the awaited completion. QuickJS hands
+    // the wrapper back, so a regression here shows up as `{"value":…}`.
+    assert_eq!(
+        succeeds(&kernel, "side++; await Promise.resolve(42)")
+            .result
+            .as_deref(),
+        Some("42")
+    );
+    assert_eq!(succeeds(&kernel, "side").result.as_deref(), Some("1"));
+    assert_eq!(
+        succeeds(&kernel, "await Promise.resolve({answer: 7})")
+            .result
+            .as_deref(),
+        Some("{\"answer\":7}")
+    );
+    // An async cell with no completion value is still `undefined`.
+    assert!(
+        succeeds(&kernel, "await Promise.resolve(1); console.log('done')")
+            .result
+            .is_none()
+    );
+    // An explicit `null` completion stays distinguishable from `undefined`.
+    assert_eq!(
+        succeeds(&kernel, "await Promise.resolve(null)")
+            .result
+            .as_deref(),
+        Some("null")
+    );
+    assert!(succeeds(&kernel, "undefined").result.is_none());
+}
+
+#[test]
 fn ordinary_and_promise_objects_named_value_are_not_unwrapped() {
     let kernel = JsKernel::spawn().unwrap();
     for code in ["({value: 7, keep: true})", "Promise.resolve({value: 7, keep: true})"] {

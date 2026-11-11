@@ -2318,12 +2318,9 @@ fn merge_mcp(base: Option<McpSettings>, other: Option<McpSettings>) -> Option<Mc
         (None, None) => None,
     };
     merged.map(|settings| McpSettings {
-        default_timeout_ms: settings
-            .default_timeout_ms
-            .map(|timeout_ms| timeout_ms.clamp(
-                MCP_SETTINGS_MIN_TIMEOUT_MS,
-                MCP_SETTINGS_MAX_TIMEOUT_MS,
-            )),
+        default_timeout_ms: settings.default_timeout_ms.map(|timeout_ms| {
+            timeout_ms.clamp(MCP_SETTINGS_MIN_TIMEOUT_MS, MCP_SETTINGS_MAX_TIMEOUT_MS)
+        }),
     })
 }
 
@@ -5301,8 +5298,14 @@ mod tests {
             grep: None,
             replace_text: None,
         };
-        assert_eq!(merge_hashline(None, Some(only_other.clone())), Some(only_other.clone()));
-        assert_eq!(merge_hashline(Some(only_other.clone()), None), Some(only_other));
+        assert_eq!(
+            merge_hashline(None, Some(only_other.clone())),
+            Some(only_other.clone())
+        );
+        assert_eq!(
+            merge_hashline(Some(only_other.clone()), None),
+            Some(only_other)
+        );
 
         // Partial fields merge field-wise, other wins.
         let base = HashlineSettings {
@@ -5369,7 +5372,12 @@ mod tests {
         // smuggle an out-of-range width past the merge.
         let wide_only = merge_hashline(Some(wide.clone()), None).unwrap();
         assert_eq!(wide_only.hash_length, Some(4));
-        assert_eq!(merge_hashline(None, Some(wide.clone())).unwrap().hash_length, Some(4));
+        assert_eq!(
+            merge_hashline(None, Some(wide.clone()))
+                .unwrap()
+                .hash_length,
+            Some(4)
+        );
         let narrow_only = merge_hashline(None, Some(narrow.clone())).unwrap();
         assert_eq!(narrow_only.hash_length, Some(2));
 
@@ -5391,7 +5399,6 @@ mod tests {
         assert_eq!(merged.hash_length, Some(3));
         assert_eq!(merged.grep, Some(false));
         assert_eq!(merged.replace_text, Some(false));
-
     }
 
     #[test]
@@ -5419,25 +5426,44 @@ mod tests {
 
         // The mcp slot is one-sided-clamped as well: a single layer's out-of-range
         // fallback cannot reach the MCP discovery validator.
-        let wide = merge_mcp(Some(McpSettings { default_timeout_ms: Some(7_200_000u64) }), None);
+        let wide = merge_mcp(
+            Some(McpSettings {
+                default_timeout_ms: Some(7_200_000u64),
+            }),
+            None,
+        );
         assert_eq!(wide.unwrap().default_timeout_ms, Some(3_600_000u64));
         let narrow = merge_mcp(
             None,
-            Some(McpSettings { default_timeout_ms: Some(0u64) }),
+            Some(McpSettings {
+                default_timeout_ms: Some(0u64),
+            }),
         );
         assert_eq!(narrow.unwrap().default_timeout_ms, Some(1u64));
 
-        // Override precedence is other<-base: a present other wins; an absent other
-        // keeps base, including when base is the stronger layer.
-        let strong = McpSettings { default_timeout_ms: Some(60_000u64) };
+        // Precedence matches `Config::merge`: `other` wins per field. A present
+        // `other` beats a stronger `base`; an absent `other` field falls back to
+        // `base`.
+        let strong = McpSettings {
+            default_timeout_ms: Some(60_000u64),
+        };
         assert_eq!(
-            merge_mcp(Some(strong.clone()), Some(base)).unwrap().default_timeout_ms,
+            merge_mcp(Some(strong.clone()), Some(base.clone()))
+                .unwrap()
+                .default_timeout_ms,
+            Some(30_000u64),
+        );
+        assert_eq!(
+            merge_mcp(Some(base.clone()), Some(strong.clone()))
+                .unwrap()
+                .default_timeout_ms,
             Some(60_000u64),
         );
         assert_eq!(
-            merge_mcp(Some(strong), Some(other)).unwrap().default_timeout_ms,
+            merge_mcp(Some(strong), Some(other))
+                .unwrap()
+                .default_timeout_ms,
             Some(60_000u64),
         );
-
     }
 }

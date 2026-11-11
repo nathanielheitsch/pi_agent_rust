@@ -320,16 +320,23 @@ fn run_cell(
         Done(JsCellResponse),
         Pending(rquickjs::Persistent<rquickjs::Promise<'static>>),
     }
+    // The grammar decides whether the completion value arrives wrapped, so it
+    // has to outlive the evaluation closure and reach Phase 3 as well.
+    let mut async_grammar = false;
     let phase1 = context.with(|ctx| {
         // Select the grammar before executing any user statements. A runtime
         // SyntaxError (including JSON.parse failures) never retries the cell.
         let evaluated = evaluator.evaluate(&ctx, &request.code, request.filename.as_deref());
         match evaluated {
             Err(err) => Phase1::Done(error_response(&ctx, &err)),
-            Ok(value) => rquickjs::Promise::from_value(value.clone()).map_or_else(
-                |_| Phase1::Done(extract_result(&ctx, &value)),
-                |promise| Phase1::Pending(rquickjs::Persistent::save(&ctx, promise)),
-            ),
+            Ok(evaluated) => {
+                async_grammar = evaluated.async_grammar;
+                let value = evaluated.value;
+                rquickjs::Promise::from_value(value.clone()).map_or_else(
+                    |_| Phase1::Done(extract_result(&ctx, &value, async_grammar)),
+                    |promise| Phase1::Pending(rquickjs::Persistent::save(&ctx, promise)),
+                )
+            }
         }
     });
 
@@ -384,7 +391,8 @@ fn run_cell(
         return error;
     }
 
-    // Phase 3: extract the settled value.
+    // Phase 3: extract the settled value. An async-grammar cell settles to the
+    // grammar's `{ value }` wrapper, which `extract_result` unwraps.
     context.with(|ctx| {
         let Some(promise) = saved.clone().restore(&ctx).ok() else {
             return JsCellResponse {
@@ -396,7 +404,7 @@ fn run_cell(
             };
         };
         match promise.result::<rquickjs::Value<'_>>() {
-            Some(Ok(value)) => extract_result(&ctx, &value),
+            Some(Ok(value)) => extract_result(&ctx, &value, async_grammar),
             Some(Err(err)) => error_response(&ctx, &err),
             None => JsCellResponse {
                 ok: false,
@@ -430,8 +438,39 @@ fn drain_jobs(
     }
 }
 
-fn extract_result<'js>(ctx: &rquickjs::Ctx<'js>, value: &rquickjs::Value<'js>) -> JsCellResponse {
-    let result = if value.is_undefined() || value.is_null() {
+/// Serialize a cell's completion value. `async_grammar` says whether QuickJS
+/// ran the cell in its async grammar, which returns the completion value as the
+/// `{ value }` wrapper that async functions hand back; that wrapper is stripped
+/// here so a cell reports its own last expression. The unwrap is keyed on the
+/// grammar rather than on the shape: an ordinary cell ending in `({ value: 7 })`
+/// must still report the guest-owned object, and a wrapper holding anything
+/// besides a single `value` field is left alone rather than guessed at.
+fn extract_result<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    value: &rquickjs::Value<'js>,
+    async_grammar: bool,
+) -> JsCellResponse {
+    let mut completion: Option<rquickjs::Value<'js>> = None;
+    if async_grammar && value.is_object() {
+        if let Some(wrapper) = value.as_object()
+            && wrapper.len() == 1
+            && wrapper.contains_key("value").unwrap_or(false)
+        {
+            // A wrapper whose `value` cannot be read — a guest accessor that
+            // throws, for instance — is reported as the wrapper itself rather
+            // than guessed at.
+            if let Ok(inner) = wrapper.get::<_, rquickjs::Value<'js>>("value") {
+                completion = Some(inner);
+            }
+        }
+    }
+    let value = completion.as_ref().unwrap_or(value);
+    // Only an absent completion has no serialization. `undefined` is the
+    // kernel's "this cell returned no value" — a bare expression statement or a
+    // console call ends that way — while an explicit `null` completion must
+    // serialize as "null", otherwise the two would be indistinguishable in the
+    // tool's `result` field.
+    let result = if value.is_undefined() {
         None
     } else {
         ctx.json_stringify_replacer_space(
