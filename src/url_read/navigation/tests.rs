@@ -361,6 +361,10 @@ fn peer(replies: Vec<String>) -> (String, std::thread::JoinHandle<Vec<String>>) 
                     Err(error) => panic!("{error}"),
                 }
             };
+            // The listener is nonblocking and an accepted stream inherits that
+            // flag on macOS, where a read returns WouldBlock immediately and any
+            // read timeout is ignored. Restore blocking mode before reading.
+            socket.set_nonblocking(false).unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();

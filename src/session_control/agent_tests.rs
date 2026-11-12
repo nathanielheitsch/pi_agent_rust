@@ -161,6 +161,11 @@ impl Peer {
                     assert!(Instant::now() < deadline, "fixture request deadline");
                     match listener.accept() {
                         Ok((mut stream, _)) => {
+                            // The listener is nonblocking and an accepted stream
+                            // inherits that flag on macOS, where a read returns
+                            // WouldBlock immediately and any read timeout is
+                            // ignored. Restore blocking mode before reading.
+                            stream.set_nonblocking(false).unwrap();
                             lock(&captured).push(read_request(&stream));
                             respond(&mut stream, reply, &stopping);
                             break;

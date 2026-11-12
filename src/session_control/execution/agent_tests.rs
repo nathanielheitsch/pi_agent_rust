@@ -167,6 +167,11 @@ fn cancelling_initiator_stops_an_idle_wire_stream_without_cancelling_poller() {
                 Err(error) => panic!("fixture accept: {error}"),
             }
         };
+        // The listener is nonblocking and an accepted stream inherits that flag
+        // on macOS, where a read returns WouldBlock immediately and any read
+        // timeout is ignored. Restore blocking mode before setting the patience
+        // budget.
+        socket.set_nonblocking(false).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();

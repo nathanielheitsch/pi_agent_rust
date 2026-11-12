@@ -1421,6 +1421,12 @@ fn e2e_cli_fetch_models_uses_models_json_route_credentials_and_headers() {
                 Err(error) => panic!("accept catalog request: {error}"),
             }
         };
+        // The listener is nonblocking and an accepted stream inherits that flag
+        // on macOS, where a read returns WouldBlock immediately and any read
+        // timeout is ignored. Restore blocking mode before reading the request.
+        stream
+            .set_nonblocking(false)
+            .expect("restore blocking mode");
         let request = read_catalog_request_headers(&mut stream);
         let body = br#"{"data":[{"id":"z/model"},{"id":"a/model"}]}"#;
         write!(
@@ -1516,6 +1522,12 @@ fn e2e_cli_fetch_models_custom_authorization_skips_held_auth_lock() {
                 Err(error) => panic!("accept catalog request: {error}"),
             }
         };
+        // The listener is nonblocking and an accepted stream inherits that flag
+        // on macOS, where a read returns WouldBlock immediately and any read
+        // timeout is ignored. Restore blocking mode before reading the request.
+        stream
+            .set_nonblocking(false)
+            .expect("restore blocking mode");
         let request = read_catalog_request_headers(&mut stream);
         let body = br#"{"data":[{"id":"custom-auth-model"}]}"#;
         write!(
@@ -1657,6 +1669,12 @@ fn e2e_cli_fetch_models_keyless_persist_updates_list_models_despite_held_auth_lo
                 Err(error) => panic!("accept catalog request: {error}"),
             }
         };
+        // The listener is nonblocking and an accepted stream inherits that flag
+        // on macOS, where a read returns WouldBlock immediately and any read
+        // timeout is ignored. Restore blocking mode before reading the request.
+        stream
+            .set_nonblocking(false)
+            .expect("restore blocking mode");
         let _request = read_catalog_request_headers(&mut stream);
         let body = br#"{"data":[{"id":"issue-150-live-model"}]}"#;
         write!(

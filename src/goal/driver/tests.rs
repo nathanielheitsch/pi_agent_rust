@@ -119,6 +119,10 @@ impl Peer {
                         Err(error) => panic!("accept: {error}"),
                     }
                 };
+                // The listener is nonblocking and an accepted stream inherits that
+                // flag on macOS, where a read returns WouldBlock immediately and any
+                // read timeout is ignored. Restore blocking mode before reading.
+                stream.set_nonblocking(false).unwrap();
                 lock(&captured).push(request(&stream));
                 let (status, content_type, body) = if failure {
                     (

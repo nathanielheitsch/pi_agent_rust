@@ -1667,6 +1667,11 @@ impl RecoveryHttpFixture {
                         Err(error) => panic!("accept failed: {error}"),
                     }
                 };
+                // The listener is nonblocking and an accepted stream inherits
+                // that flag on macOS, where a read returns WouldBlock
+                // immediately and any read timeout is ignored. Restore blocking
+                // mode before setting the patience budget.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();

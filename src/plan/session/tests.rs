@@ -675,6 +675,12 @@ mod wire {
                         assert!(Instant::now() < deadline, "missing fixture request {index}");
                         match listener.accept() {
                             Ok((mut stream, _)) => {
+                                // The listener is nonblocking and an accepted stream
+                                // inherits that flag on macOS, where a read returns
+                                // WouldBlock immediately and any read timeout is
+                                // ignored. Restore blocking mode before setting the
+                                // patience budget.
+                                stream.set_nonblocking(false).unwrap();
                                 stream
                                     .set_write_timeout(Some(Duration::from_secs(30)))
                                     .unwrap();

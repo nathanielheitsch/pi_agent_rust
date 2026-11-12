@@ -117,6 +117,10 @@ impl Peer {
                         }
                     }
                 };
+                // The listener is nonblocking and an accepted stream inherits that
+                // flag on macOS, where a read returns WouldBlock immediately and any
+                // read timeout is ignored. Restore blocking mode before reading.
+                stream.set_nonblocking(false).expect("restore blocking");
                 captured
                     .lock()
                     .expect("requests")

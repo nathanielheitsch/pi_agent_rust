@@ -69,6 +69,10 @@ fn peer(responses: Vec<(u16, Value)>) -> (String, std::thread::JoinHandle<Vec<(S
                     Err(error) => panic!("peer accept: {error}"),
                 }
             };
+            // The listener is nonblocking and an accepted stream inherits that
+            // flag on macOS, where a read returns WouldBlock immediately and any
+            // read timeout is ignored. Restore blocking mode before reading.
+            socket.set_nonblocking(false).unwrap();
             captured.push(receive(&mut socket));
             let bytes = serde_json::to_vec(&body).unwrap();
             write!(socket, "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", bytes.len()).unwrap();

@@ -4429,6 +4429,13 @@ pub(crate) mod tests {
                     }
                     match listener.accept() {
                         Ok((mut delete, _)) => {
+                            // The listener is nonblocking and an accepted stream
+                            // inherits that flag on macOS, where a read returns
+                            // WouldBlock immediately and any read timeout is
+                            // ignored. Restore blocking mode before reading.
+                            delete
+                                .set_nonblocking(false)
+                                .expect("restore blocking mode");
                             let (request_line, headers, _) = read_request(&mut delete);
                             if request_line == "DELETE /mcp HTTP/1.1"
                                 && headers.iter().any(|(name, value)| {
@@ -4601,6 +4608,13 @@ pub(crate) mod tests {
                 for _ in 0..500 {
                     match listener.accept() {
                         Ok((stream, _)) => {
+                            // The listener is nonblocking and an accepted stream
+                            // inherits that flag on macOS, where a read returns
+                            // WouldBlock immediately and any read timeout is
+                            // ignored. Restore blocking mode before reading.
+                            stream
+                                .set_nonblocking(false)
+                                .expect("restore blocking mode");
                             cancellation = Some(stream);
                             break;
                         }
