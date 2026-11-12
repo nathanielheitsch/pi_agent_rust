@@ -99,6 +99,11 @@ impl Peer {
                     }
                     Err(error) => panic!("fixture accept: {error}"),
                 };
+                // The listener is nonblocking and an accepted stream inherits
+                // that flag on macOS, where a nonblocking read returns WouldBlock
+                // immediately and any read timeout is ignored. Restore blocking
+                // mode so the fixture waits for the client's request.
+                stream.set_nonblocking(false).unwrap();
                 let request = read_request(&stream);
                 captured.lock().unwrap().push(request);
                 let (delta, reason) = if read_tool_first && index == 0 {

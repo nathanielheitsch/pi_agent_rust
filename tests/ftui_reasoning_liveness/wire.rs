@@ -127,8 +127,14 @@ fn accept(listener: &TcpListener) -> TcpStream {
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
+                // The listener is nonblocking and an accepted stream inherits
+                // that flag on macOS, where a read returns WouldBlock
+                // immediately and any timeout is ignored. Restore blocking mode
+                // so reads wait for EOF or a reset instead of misreporting.
+                stream.set_nonblocking(false).unwrap();
                 stream.set_nodelay(true).expect("fixture TCP_NODELAY");
                 stream.set_write_timeout(Some(WAIT)).expect("write timeout");
+                stream.set_read_timeout(Some(WAIT)).expect("read timeout");
                 return stream;
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
