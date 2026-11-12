@@ -6407,7 +6407,14 @@ impl Session {
                 summary: compaction.summary.clone(),
                 tokens_before: compaction.tokens_before,
             };
-            if let Some(message) = session_message_to_model(&summary_message) {
+            if let Some(mut message) = session_message_to_model(&summary_message) {
+                if let Message::User(summary) = &mut message {
+                    // Projected summary metadata must not change on each read.
+                    // Malformed entry timestamps deterministically map to zero.
+                    summary.timestamp =
+                        chrono::DateTime::parse_from_rfc3339(&compaction.base.timestamp)
+                            .map_or(0, |timestamp| timestamp.timestamp_millis());
+                }
                 // Snapcompact (bd-cv653.7.6): attach rasterized frames stored in
                 // this entry's details so vision-capable models can consume them.
                 let payload =
@@ -13478,6 +13485,126 @@ mod tests {
             all_text.contains("kept message C") || all_text.contains("new message D"),
             "kept messages should appear in context"
         );
+    }
+
+    #[test]
+    fn compaction_projection_uses_entry_timestamp_and_preserves_frames_on_reopen() {
+        let temp = tempfile::tempdir().expect("session directory");
+        let mut session = Session::create_with_dir(Some(temp.path().to_path_buf()));
+        session.append_message(make_test_message("archived request"));
+        let first_kept = session.append_message(SessionMessage::User {
+            content: UserContent::Blocks(vec![
+                ContentBlock::Text(TextContent::new("retained native request")),
+                ContentBlock::Image(crate::model::ImageContent {
+                    data: "aGVsbG8=".to_string(),
+                    mime_type: "image/png".to_string(),
+                }),
+            ]),
+            timestamp: Some(77),
+        });
+        session.append_message(make_test_tool_call_message("retained-call"));
+        session.append_message(make_test_tool_result_message("retained-call"));
+        let retained = session.to_messages_for_current_path()[1..].to_vec();
+        let payload = crate::compaction_snap::SnapPayload::new(
+            crate::compaction_snap::render_frames("[User]: archived request"),
+        );
+        assert!(!payload.frames.is_empty());
+        let compaction_id = session.append_compaction(
+            "Archived task finished.".to_string(),
+            first_kept,
+            1000,
+            Some(crate::compaction_snap::payload_to_details(None, &payload)),
+            None,
+        );
+        session
+            .get_entry_mut(&compaction_id)
+            .expect("compaction entry")
+            .base_mut()
+            .timestamp = "1970-01-01T00:00:01.234Z".to_string();
+
+        let mut summary_content = vec![ContentBlock::Text(TextContent::new(format!(
+            "{COMPACTION_SUMMARY_PREFIX}Archived task finished.{COMPACTION_SUMMARY_SUFFIX}"
+        )))];
+        summary_content.extend(payload.frames.iter().map(|frame| {
+            ContentBlock::Image(crate::model::ImageContent {
+                data: frame.png.clone(),
+                mime_type: "image/png".to_string(),
+            })
+        }));
+        let mut expected = vec![Message::User(UserMessage {
+            content: UserContent::Blocks(summary_content),
+            timestamp: 1234,
+        })];
+        expected.extend(retained);
+        let expected = serde_json::to_value(expected).expect("expected context");
+        for _ in 0..2 {
+            assert_eq!(
+                serde_json::to_value(session.to_messages_for_current_path()).unwrap(),
+                expected,
+            );
+        }
+        let provenance = session.to_messages_for_current_path_with_timestamp_provenance();
+        assert!(provenance[0].1, "summary metadata is still projected");
+        assert!(provenance[1..].iter().all(|(_, synthetic)| !synthetic));
+
+        run_async(async { session.save().await }).expect("save compacted session");
+        assert_eq!(
+            serde_json::to_value(session.to_messages_for_current_path()).unwrap(),
+            expected,
+        );
+        let path = session.path.as_ref().expect("session path");
+        let reopened = run_async(Session::open(path.to_string_lossy().as_ref()))
+            .expect("reopen compacted session");
+        assert_eq!(
+            serde_json::to_value(reopened.to_messages_for_current_path()).unwrap(),
+            expected,
+        );
+        assert!(
+            reopened.to_messages_for_current_path_with_timestamp_provenance()[0].1,
+            "reopening must preserve the summary's synthetic origin",
+        );
+    }
+
+    #[test]
+    fn compaction_projection_uses_zero_for_malformed_entry_timestamps() {
+        for timestamp in ["not-a-timestamp", ""] {
+            let temp = tempfile::tempdir().expect("session directory");
+            let mut session = Session::create_with_dir(Some(temp.path().to_path_buf()));
+            let retained = make_test_message("retained request");
+            let first_kept = session.append_message(retained.clone());
+            let compaction_id =
+                session.append_compaction("summary".to_string(), first_kept, 1000, None, None);
+            session
+                .get_entry_mut(&compaction_id)
+                .expect("compaction entry")
+                .base_mut()
+                .timestamp = timestamp.to_string();
+            let expected = serde_json::json!([
+                {
+                    "role": "user",
+                    "content": [{
+                        "type": "text",
+                        "text": format!("{COMPACTION_SUMMARY_PREFIX}summary{COMPACTION_SUMMARY_SUFFIX}"),
+                    }],
+                    "timestamp": 0,
+                },
+                session_message_to_model(&retained).expect("retained message"),
+            ]);
+            for _ in 0..2 {
+                assert_eq!(
+                    serde_json::to_value(session.to_messages_for_current_path()).unwrap(),
+                    expected,
+                );
+            }
+            run_async(async { session.save().await }).expect("save malformed timestamp");
+            let path = session.path.as_ref().expect("session path");
+            let reopened = run_async(Session::open(path.to_string_lossy().as_ref()))
+                .expect("reopen malformed timestamp");
+            assert_eq!(
+                serde_json::to_value(reopened.to_messages_for_current_path()).unwrap(),
+                expected,
+            );
+        }
     }
 
     #[test]
