@@ -17,6 +17,11 @@ fn accept(listener: &TcpListener) -> TcpStream {
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
+                // The listener is nonblocking and an accepted stream inherits
+                // that flag on macOS, where a nonblocking read returns
+                // WouldBlock immediately and any read timeout is ignored.
+                // Restore blocking mode before setting the patience budget.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(8)))
                     .unwrap();

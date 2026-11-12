@@ -109,6 +109,11 @@ impl HttpFixture {
                     }
                     Err(error) => panic!("fixture accept: {error}"),
                 };
+                // The listener is nonblocking and an accepted stream inherits
+                // that flag on macOS, where a nonblocking read returns WouldBlock
+                // immediately and any read timeout is ignored. Restore blocking
+                // mode so the fixture waits for the client's request.
+                stream.set_nonblocking(false).unwrap();
                 let (headers, request) = read_request(&mut stream);
                 assert!(headers.lines().any(|line| {
                     line.split_once(':').is_some_and(|(name, value)| {
@@ -265,6 +270,11 @@ impl ProviderFixture {
                     }
                     Err(error) => panic!("provider fixture accept: {error}"),
                 };
+                // The listener is nonblocking and an accepted stream inherits
+                // that flag on macOS, where a nonblocking read returns WouldBlock
+                // immediately and any read timeout is ignored. Restore blocking
+                // mode so the fixture waits for the client's request.
+                stream.set_nonblocking(false).unwrap();
                 let (_, request) = read_request(&mut stream);
                 let index = observed.fetch_add(1, Ordering::AcqRel);
                 assert!(

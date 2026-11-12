@@ -32,7 +32,14 @@ fn accept(listener: &TcpListener) -> TcpStream {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match listener.accept() {
-            Ok((socket, _)) => return socket,
+            Ok((socket, _)) => {
+                // The listener is nonblocking and an accepted stream inherits
+                // that flag on macOS, where a nonblocking read returns
+                // WouldBlock immediately and any read timeout is ignored.
+                // Restore blocking mode; headers() sets the patience budget.
+                socket.set_nonblocking(false).unwrap();
+                return socket;
+            }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 assert!(Instant::now() < deadline, "no browser connection");
                 thread::sleep(Duration::from_millis(2));

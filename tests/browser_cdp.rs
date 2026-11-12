@@ -34,7 +34,14 @@ fn accept(listener: &TcpListener) -> TcpStream {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         match listener.accept() {
-            Ok((stream, _)) => return stream,
+            Ok((stream, _)) => {
+                // The listener is nonblocking and an accepted stream inherits
+                // that flag on macOS, where a nonblocking read returns
+                // WouldBlock immediately and any read timeout is ignored.
+                // Restore blocking mode; headers() sets the patience budget.
+                stream.set_nonblocking(false).unwrap();
+                return stream;
+            }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 assert!(
                     Instant::now() < deadline,

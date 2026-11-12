@@ -107,6 +107,10 @@ pub(super) fn serve(response: Vec<u8>) -> (SocketAddr, std::thread::JoinHandle<(
                 Err(error) => panic!("fixture accept: {error}"),
             }
         };
+        // The listener is nonblocking and an accepted stream inherits that flag
+        // on macOS, where a nonblocking read returns WouldBlock immediately and
+        // any read timeout is ignored. Restore blocking mode before the budget.
+        socket.set_nonblocking(false).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();

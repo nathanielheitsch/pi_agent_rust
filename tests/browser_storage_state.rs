@@ -117,6 +117,11 @@ mod live {
                         }
                         Err(_) => break,
                     };
+                    // The listener is nonblocking and an accepted stream inherits
+                    // that flag on macOS, where a nonblocking read returns WouldBlock
+                    // immediately and any read timeout is ignored. Restore blocking
+                    // mode so the fixture waits for the client's request.
+                    stream.set_nonblocking(false).unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(1)))
                         .unwrap();
