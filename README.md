@@ -26,9 +26,18 @@
 </p>
 
 ```bash
-# Install latest release
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/pi_agent_rust/main/install.sh?$(date +%s)" | bash
+# Install: this fork is distributed through Homebrew.
+brew install <your-tap>/pi
+
+# Or build and install from source.
+cargo install --path .
 ```
+
+> **Fork status.** This repository is a fork of the upstream Pi Rust port. It
+> publishes no release feed and runs no build pipeline: the in-tree `install.sh`,
+> `uninstall.sh`, and `pi self-update` resolve upstream artifacts that this fork
+> does not produce, so use Homebrew (or a source install) for upgrades. Quality
+> work runs through `scripts/verify_local.sh`. See [Installation](#installation).
 
 ---
 
@@ -58,15 +67,19 @@ that produces a simpler, safer, or better coding agent. Historical drop-in and
 parity artifacts remain in the repository as records; they do not gate product
 work, releases, or user-facing claims.
 
-All repository quality checks, builds, and releases run through Doodlestein
-Self-Releaser (DSR). Contributors must not invoke Cargo or RCH directly, and
-GitHub Actions is never an execution or evidence authority for this project.
-Use `dsr quality --tool pi_agent_rust` for the registered quality recipe and
-the canonical DSR build/release commands documented in
-[docs/releasing.md](docs/releasing.md).
+Quality checks for this fork run locally through **`scripts/verify_local.sh`**
+(`cargo fmt --check`, `cargo check`, Clippy, the full test suite, and the
+repository gates). GitHub Actions is never an execution or evidence authority
+here.
 
-For signed published payload verification and offline CLI smoke checks, see
-[Published release consumer checks](docs/published-release-checks.md).
+Doodlestein Self-Releaser (`dsr`) and RCH are **retired in this fork**: they were
+the upstream author's private release infrastructure, live outside this
+repository, point at the upstream GitHub repo, and offload builds to a remote
+worker fleet that does not exist on this host. No release, artifact, or signing
+key exists here yet, and none is being built — that work waits for a beta the
+owner is happy with. [docs/releasing.md](docs/releasing.md) and
+[docs/published-release-checks.md](docs/published-release-checks.md) are
+retained as records of the upstream program, not as instructions.
 
 Rather than a direct line-by-line translation, this port builds on two purpose-built Rust libraries:
 - **[asupersync](https://github.com/Dicklesworthstone/asupersync)**: A structured concurrency async runtime with built-in HTTP, TLS, and SQLite
@@ -170,7 +183,7 @@ assuming one optimization proves an end-to-end result.
 | Efficient long-session storage | SQLite session index + v2 sidecar (segmented log + offset index) with O(index+tail) reopen path | Avoid full-history work on eligible resumes |
 | Streaming parser tuned for real networks | SSE parser tracks scanned bytes, handles UTF-8 tails, normalizes chunk boundaries, interns event-type strings | Reduce repeated scanning and parser stalls |
 | Safe fast-path controls | Shadow dual execution sampling, automatic backoff on divergence/overhead, compatibility-lane kill switches for containment | Bound optimization risk and preserve fallback behavior |
-| DSR performance governance | Scenario matrices, strict artifact contracts, fail-closed perf gates | Detect regressions before release |
+| Local quality/perf governance | Scenario matrices, strict artifact contracts, fail-closed perf gates | Detect regressions before they ship |
 
 If you want the full implementation inventory, see [Performance Engineering](#performance-engineering).
 
@@ -274,13 +287,25 @@ The terminal UI uses rich_rust for all output formatting, providing the same vis
 ### 1. Install
 
 ```bash
-# Install latest release binary
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/pi_agent_rust/main/install.sh?$(date +%s)" | bash
+# From a Homebrew tap (the supported distribution route for this fork)
+brew install <your-tap>/pi
+
+# Or from source
+cargo install --path .
 ```
 
-If you already have the original TypeScript `pi` installed, the installer asks
-whether to make Rust Pi canonical as `pi` and automatically create `legacy-pi`
-for the old command.
+Source builds need the nightly pinned in `rust-toolchain.toml`. Homebrew's
+`cargo` is stable and rejects the `-Z` rustflags in `.cargo/config.toml`, so
+install rustup and let it resolve the pin, or prefix explicitly:
+
+```bash
+PATH="$HOME/.rustup/toolchains/nightly-2026-08-31-aarch64-apple-darwin/bin:$PATH" cargo install --path .
+```
+
+The in-tree `install.sh`/`uninstall.sh` fetch release assets from the **upstream**
+repository and cannot resolve artifacts this fork publishes (it publishes none).
+If you already have the original TypeScript `pi` installed, decide yourself
+whether Rust Pi owns the `pi` command name and whether to keep `legacy-pi`.
 
 ### 2. Configure API Key
 
@@ -699,8 +724,9 @@ This project validates extension compatibility with a three-track pipeline:
 
 1. **Fetch unvendored source corpus**
    - Binary: `ext_unvendored_fetch_run`
-   - Execution authority: the registered DSR extension-validation lane; do not
-     invoke the example directly with Cargo
+   - Execution: build and run the example locally
+     (`cargo run --release --example ext_unvendored_fetch_run`); this fork has no
+     remote validation lane
    - Purpose:
      - Clones GitHub repos and unpacks npm tarballs into `.tmp-codex-unvendored-cache/`
      - Produces machine-readable acquisition status for all unvendored candidates
@@ -710,7 +736,8 @@ This project validates extension compatibility with a three-track pipeline:
 
 2. **Run end-to-end validation orchestration**
    - Binary: `ext_full_validation`
-   - Execution authority: the registered DSR extension-validation lane
+   - Execution: `cargo run --release --example ext_full_validation` (local; no
+     DSR extension-validation lane exists in this fork)
    - Stages (in order):
      1. `refresh_onboarding_queue` (runs `ext_onboarding_queue`)
      2. `conformance_shard_0..N` (runs `ext_conformance_generated` sharded matrix)
@@ -726,7 +753,8 @@ This project validates extension compatibility with a three-track pipeline:
 
 3. **Run dev-firstset live-provider gate (must pass before release build)**
    - Binary: `ext_release_binary_e2e`
-   - Execution authority: DSR quality with its configured live-provider inputs
+   - Execution: `cargo run --release --example ext_release_binary_e2e` with a
+     configured live provider (local; no remote lane exists in this fork)
    - Purpose:
      - Proves the current codepath works end-to-end on a representative first-set before paying release-build cost.
      - Serves as the promotion gate to full release-binary validation.
@@ -738,7 +766,9 @@ This project validates extension compatibility with a three-track pipeline:
 
 4. **Run full release-binary live-provider E2E (after step 3 passes)**
    - Binary: `ext_release_binary_e2e`
-   - Execution authority: the DSR release-validation lane after DSR quality passes
+   - Execution: `cargo run --release --example ext_release_binary_e2e` (local;
+     no release build is published by this fork, so treat this as a local
+     exercise rather than a promotion gate)
    - Purpose:
      - Executes `target/release/pi` directly for each selected extension case.
      - Uses a live provider/model path (default `ollama` + `qwen2.5:0.5b`) to exercise non-mocked end-to-end behavior.
@@ -761,12 +791,16 @@ This project validates extension compatibility with a three-track pipeline:
 
 ### Recommended run environment
 
-These runs compile many crates and can be disk-heavy. DSR owns target/temp
-placement, load admission, and any remote offload. Run the registered recipe:
+These runs compile many crates and can be disk-heavy. Use the local gate, which
+pins the toolchain, scrubs inherited `PI_*` session variables, and sets
+`RUST_MIN_STACK`:
 
 ```bash
-dsr quality --tool pi_agent_rust
+scripts/verify_local.sh
 ```
+
+Builds are large enough to matter for disk space: `target/` has reached ~10 GB
+here, so check `df -h` before a full gate on a tight volume.
 
 ### Historical run snapshot (extension gate refresh 2026-05-15)
 
@@ -798,27 +832,35 @@ From:
 
 ## Installation
 
-### Curl Installer (Recommended)
+### Homebrew (supported route for this fork)
 
 ```bash
-# Latest release
+brew install <your-tap>/pi
+brew upgrade pi
+```
+
+This fork publishes no GitHub releases, so `pi self-update` only reports how the
+binary is managed; upgrades come from the package manager that owns it.
+
+### Build from source
+
+```bash
+# Needs the nightly pinned in rust-toolchain.toml (rustup resolves it automatically).
+cargo install --path .
+```
+
+### The inherited curl installer (upstream artifacts only — not functional here)
+
+`install.sh` and `uninstall.sh` are inherited from the upstream repository and
+fetch release assets published there. Against this fork they cannot resolve any
+artifact, so they are documented below as the upstream contract — kept for the
+migration and completion behavior they implement — not as a route to install
+this fork.
+
+```bash
+# Upstream usage, recorded for reference
 curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/pi_agent_rust/main/install.sh?$(date +%s)" | bash
-
-# Non-interactive + auto PATH update
 curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/pi_agent_rust/main/install.sh?$(date +%s)" | bash -s -- --yes --easy-mode
-
-# Pin a release tag
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/pi_agent_rust/v0.3.0/install.sh" | bash -s -- --version v0.3.0
-
-# Install from explicit artifact URL + checksum URL
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/pi_agent_rust/v0.3.0/install.sh" | \
-  bash -s -- \
-    --artifact-url "https://github.com/Dicklesworthstone/pi_agent_rust/releases/download/v0.3.0/pi-linux-amd64.tar.xz" \
-    --checksum-url "https://github.com/Dicklesworthstone/pi_agent_rust/releases/download/v0.3.0/pi-linux-amd64.tar.xz.sha256"
-
-# Skip completion setup (CI/non-interactive minimal install)
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/pi_agent_rust/main/install.sh?$(date +%s)" | \
-  bash -s -- --yes --no-completions
 ```
 
 The installer is idempotent and supports a migration path from TypeScript Pi:
@@ -853,7 +895,15 @@ Installer regression harness (options + checksum + signature + completions):
 bash tests/installer_regression.sh
 ```
 
+This is a lane of `scripts/verify_local.sh`. It exercises `install.sh` against
+fixtures and local artifacts, so it passes here even though the installer cannot
+fetch a release feed for this fork.
+
 ### Distribution Compatibility Contract (Packaging/Invocation Scope)
+
+Inherited from upstream and retained as the packaging contract its installer
+implements. It describes what an installer *would* ship; this fork ships nothing,
+so treat it as a specification, not a description of current distribution.
 
 For migration adoption, packaging and invocation compatibility follows this contract:
 
@@ -867,7 +917,7 @@ For migration adoption, packaging and invocation compatibility follows this cont
 - If you keep TypeScript `pi` as canonical (`--keep-existing-pi`), Rust Pi is installed as `pi-rust`.
 - On Apple Silicon, the installer prefers the native arm64 artifact even when launched from a Rosetta-translated shell.
 - Version-pinned installs are supported via `install.sh --version vX.Y.Z` for deterministic rollouts.
-- DSR releases ship each platform archive with a same-name `.sha256` sidecar
+- Upstream releases ship each platform archive with a same-name `.sha256` sidecar
   for integrity validation. The v0.3.0 release predates that contract and
   ships an aggregate `SHA256SUMS` instead; the installer verifies the
   per-asset sidecar first and falls back to `SHA256SUMS` only when the
@@ -889,15 +939,17 @@ command -v legacy-pi && legacy-pi --version
 
 Repository builds are tested with the exact toolchain pinned in
 `rust-toolchain.toml` (`nightly-2026-08-31`). The locked dependency graph
-requires Rust 1.95 or newer. Project builds are DSR-only:
+requires Rust 1.95 or newer. Build and validate locally:
 
 ```bash
-dsr quality --tool pi_agent_rust
-dsr build pi_agent_rust
+scripts/verify_local.sh      # fmt, check, clippy, full tests, repo gates
+cargo build --release        # or cargo install --path .
 ```
 
-End users should install a DSR-published archive through `install.sh`. There is
-no supported direct-Cargo contributor or installation lane.
+Homebrew's `cargo` is stable and rejects the `-Z` rustflags in
+`.cargo/config.toml`; use rustup so the pinned nightly is resolved, or prefix
+`PATH` with the toolchain's `bin`. There is no published archive to install in
+this fork, so a source install or a Homebrew formula is the only route.
 
 ### Dependencies
 
@@ -2243,21 +2295,17 @@ panic = "abort"      # No unwinding machinery
 strip = true         # Remove symbol tables
 ```
 
-Binary size is explicitly budgeted by the DSR quality recipe via `binary_size_release`, with a target
-threshold of `48.0 MiB` (the harness computes bytes / 1024 / 1024; raised from
-`26.0 MiB` for the v0.3.0 capability wave — BPE token tables, LSP/DAP
-bridges, the MCP client, and eval kernels — and previously from
-`22.0 MiB` with the FrankenSQLite cutover). A fresh
-`v0.3.0` release measurement is required before reporting the achieved size.
-Default release builds keep heavyweight extras opt-in; use `--features full`
-when you need the image, clipboard, wasm, jemalloc, and syntax-highlighting
-extras in one build.
+Binary size is budgeted at a `48.0 MiB` threshold (bytes / 1024 / 1024; raised
+from `26.0 MiB` for the v0.3.0 capability wave — BPE token tables, LSP/DAP
+bridges, the MCP client, and eval kernels — and previously from `22.0 MiB` with
+the FrankenSQLite cutover). This fork publishes no release, so measure a local
+`--profile dist` build before reporting any achieved size. Default release
+builds keep heavyweight extras opt-in; use `--features full` when you need the
+image, clipboard, wasm, jemalloc, and syntax-highlighting extras in one build.
 
-Published binaries (GitHub Releases, the installer, `pi self-update`) are built
-by DSR with `--profile dist`. It inherits every setting above and sets
-`opt-level = 3`, so the binaries people download are optimized for speed and are
-larger than a `release` build. The `binary_size_release` budget keeps measuring
-the `release` profile.
+The `dist` profile is what a published binary would use: it inherits every
+setting above and sets `opt-level = 3`, so it is faster and larger than a
+`release` build. The `48.0 MiB` budget measures the `release` profile.
 
 ### Benchmark Evidence vs Shipping Artifacts
 
@@ -2321,26 +2369,25 @@ Current checked-in performance evidence state:
 
 ### Quality and benchmark authority
 
-Use the registered DSR recipe for day-to-day validation and definitive
-benchmark evidence:
+Use `scripts/verify_local.sh` for day-to-day validation, and regenerate these
+artifacts from the source revision you are reporting on:
 
-- **Quality gate:** `dsr quality --tool pi_agent_rust`.
-- **Definitive evidence:** require the DSR run to regenerate and validate these
-  artifacts:
-  - `tests/perf/reports/phase1_matrix_validation.json`
-  - `tests/full_suite_gate/full_suite_verdict.json`
-  - `tests/full_suite_gate/certification_verdict.json`
-  - `tests/full_suite_gate/extension_remediation_backlog.json`
+- `tests/perf/reports/phase1_matrix_validation.json`
+- `tests/full_suite_gate/full_suite_verdict.json`
+- `tests/full_suite_gate/certification_verdict.json`
+- `tests/full_suite_gate/extension_remediation_backlog.json`
 
-Direct Cargo, RCH, and repository wrapper invocations are not evidence and are
-not an authorized fast path around DSR.
+A run is evidence only when its artifact names the source commit it measured.
+Historical artifacts and retired-pipeline outputs are records, not proof of the
+current revision.
 
 ### Extension Workload Hotspot Profiling
 
 Pi includes a dedicated `ext_workloads` workload harness for extension runtime
-bottlenecks. Run it only through the registered DSR performance lane, which
-writes `ext_workloads.jsonl`, `ext_hostcall_hotspot_matrix.json`, and
-`ext_hostcall_bridge_trace.jsonl` with DSR provenance.
+bottlenecks. Run it locally (`cargo run --release --bench ext_workloads`, or the
+matching example) and keep the runpack with the commit it measured: it writes
+`ext_workloads.jsonl`, `ext_hostcall_hotspot_matrix.json`, and
+`ext_hostcall_bridge_trace.jsonl`.
 
 This harness does more than raw timing:
 
@@ -2383,7 +2430,7 @@ artifacts, or allow heavy cargo to fail open into a local build.
 If validation-broker status or plan JSON is supplied with
 `--validation-broker-json`, the runpack projects source status, slot counts,
 stale slot warnings, duplicate-gate opportunities, and recommended next actions
-as advisory handoff data. This projection does not replace DSR, Doctor, Beads,
+as advisory handoff data. This projection does not replace Doctor, Beads,
 Agent Mail, UBS, or release-claim gates. Operator
 workflow, privacy, and degraded-data guidance lives in
 [docs/swarm-operations-runbook.md#validation-broker-operator-workflow](docs/swarm-operations-runbook.md#validation-broker-operator-workflow).
@@ -3021,13 +3068,14 @@ A: Yes. Point any provider at a custom base URL via `models.json`. Pi normalizes
 ### Building
 
 ```bash
-dsr quality --tool pi_agent_rust
-dsr build pi_agent_rust
+scripts/verify_local.sh     # fmt, check, clippy, full tests, repo gates
+cargo build --release       # local build
 ```
 
-DSR owns formatting, compilation, linting, tests, target/temp placement, and
-any remote offload. RCH and repository wrappers are DSR implementation details,
-not alternate contributor entry points.
+The local gate owns formatting, compilation, linting, tests, and the repository
+gates. Cargo is the toolchain here: DSR and RCH were the upstream author's
+private release infrastructure and are retired in this fork, so there is no
+remote offload lane and no parallel build authority.
 
 Before launching swarms or heavyweight all-target gates, run
 `pi doctor --only swarm --format json`. The
@@ -3056,23 +3104,23 @@ visible instead of being promoted to green validation evidence.
 
 ### Feature defaults
 
-Default DSR builds enable `sqlite-sessions` only; JSONL remains the default
-session store unless configuration selects SQLite. Heavyweight extras
-(`image-resize`, `jemalloc`, `clipboard`, `wasm-host`, and syntax highlighting)
-are opt-in so the default release binary stays under the size budget. Feature
-variants must be declared in the DSR recipe instead of injected through a
-direct Cargo invocation.
+Default builds enable `sqlite-sessions` only; JSONL remains the default session
+store unless configuration selects SQLite. Heavyweight extras (`image-resize`,
+`jemalloc`, `clipboard`, `wasm-host`, and syntax highlighting) are opt-in so the
+default release binary stays under the size budget. Declare feature variants in
+the gate script or a dedicated build command rather than scattering ad hoc
+feature flags across docs.
 
 ### Testing
 
 ```bash
-dsr quality --tool pi_agent_rust
+scripts/verify_local.sh
 ```
 
-The registered recipe owns unit, integration, conformance, E2E, installer,
-extension, formatting, lint, security, reachability, ledger-reconciliation,
-and evidence-integrity gates. If a required focused lane is missing, add it to
-DSR; do not bypass DSR by invoking Cargo, RCH, or a repository wrapper directly.
+The gate owns unit, integration, conformance, E2E, installer, formatting, lint,
+reachability, and evidence-integrity lanes. If a required focused lane is
+missing, add it to `scripts/verify_local.sh` rather than hand-picking a subset of
+Cargo commands and reporting that as the authoritative result.
 
 Important validation components include:
 
@@ -3085,43 +3133,28 @@ Important validation components include:
 - `startup_benchmark_runner` measures fresh release startup latency distributions and binary size under N-run repetition protocol against `pi.perf.startup_benchmark.contract.v1`.
 - `variance_gate` gates benchmark inputs against host topology noise thresholds (`noise_score`), rejecting noisy runs as `NO_DATA` to prevent averaging into compliance against `pi.perf.variance_gating.contract.v1`.
 
-### Release & Publishing
+### Release & Publishing — none yet, by decision
 
-Releases are tag-driven, must align with `Cargo.toml` versions, and are built
-and published exclusively through Doodlestein Self-Releaser (DSR).
+This fork publishes nothing: no tags, no archives, no signatures, no crates.io
+publication, and no build pipeline. That is a deliberate choice, not a broken
+pipeline — release infrastructure gets rebuilt once the owner is satisfied with a
+beta. Until then, do not tag, build-for-release, sign, or publish, and do not
+create or "repair" release machinery without an explicit request.
 
-- Tag format: `vX.Y.Z` (pre-releases like `vX.Y.Z-rc.N` are allowed).
-- The tag version **must** match `package.version` in `Cargo.toml`.
-- Publish order for dependencies: `asupersync` → `rich_rust` → `charmed-*` (lipgloss, bubbletea, bubbles, glamour) → `pi_agent_rust`.
-- Cargo registry publication is currently **HOLD** until DSR provides and
-  validates a fail-closed crates.io publisher. Neither stable nor pre-release
-  tags authorize an ad hoc `cargo publish` fallback.
-- GitHub Actions is never used for this repository. Files under
-  `.github/workflows/` are disabled historical references and are not build,
-  test, publication, or evidence authorities.
-- DSR owns quality checks, native cross-platform builds, packaging, signing,
-  publication, and public-release verification. DSR may use RCH internally;
-  contributors never invoke RCH as a parallel build or evidence lane.
-- The canonical DSR operating details are documented in
-  [docs/releasing.md](docs/releasing.md). A tag or source build without
-  DSR-published, publicly verified artifacts is not a release.
-  Immutable `v*` tag ruleset `20418963` was created and read back on 2026-08-04
-  with update/deletion forbidden and no bypass actors. That historical
-  observation is not current proof: DSR must gain a fail-closed live ruleset
-  check before any release. The retired manual lane is not a fallback, and no
-  GitHub Actions lane exists or may be enabled.
+- Distribution is a Homebrew formula maintained outside this repository.
+- `pi self-update` reports which package manager owns the binary; it does not
+  upgrade it.
+- GitHub Actions is never used here. Files under `.github/workflows/` are
+  disabled historical references and are not build, test, publication, or
+  evidence authorities.
+- [docs/releasing.md](docs/releasing.md) describes the upstream DSR program and
+  is retained as a record. A tag or a source build is not a release.
 
 ### Coverage
 
-Coverage is a component of the registered DSR quality recipe:
-
-```bash
-dsr quality --tool pi_agent_rust
-```
-
-DSR provisions the coverage toolchain and records summary, LCOV, and HTML
-artifacts with source provenance; direct coverage-tool invocations are not an
-accepted project gate.
+Coverage is not part of the local gate yet. When you need it, run the coverage
+tool directly against the pinned toolchain and keep the artifacts alongside the
+commit they measured; a coverage number without a source commit is not evidence.
 
 ### Project Structure
 
@@ -3293,13 +3326,11 @@ artifact's status for that budget and fails on any disagreement. Run it after
 any refresh:
 
 ```bash
-# 1. Verify the DSR perf recipe is ready, and see what inputs are missing
-#    before spending a build on them
-bash scripts/perf/preflight_dsr_recipe.sh
+# 1. Check what measurement inputs are missing before spending a build on them
 python3 scripts/perf/preflight_budget_inputs.py
 
-# 2. Build the release binary via DSR (the only authorized build path)
-dsr build pi_agent_rust
+# 2. Build the binary you will measure (the perf harness expects a release build)
+cargo build --release
 
 # 3. Generate the canonical measurement artifacts
 python3 scripts/perf/measure_idle_memory.py
@@ -3312,7 +3343,7 @@ python3 scripts/perf/run_event_dispatch_scenario.py
 #    that overwrites the same path with a different, lossier format --
 #    do not run it (bd-o9qzt).
 PI_GENERATE_PERF_BUDGET_REPORT=1 \
-  dsr quality --tool pi_agent_rust   # or the perf-budgets test under RCH
+  cargo test --locked --test perf_budgets generate_budget_report -- --nocapture
 
 # 5. Rebuild the evidence bundle, restate the table above, and verify
 python3 scripts/perf/rebuild_evidence_bundle.py

@@ -1,4 +1,9 @@
 # Published release consumer checks
+>
+> **Not applicable to this fork.** It verifies publicly shipped bytes, and this
+> fork publishes none — no release feed, no minisign keypair, no DSR lane. Kept
+> as a record of the upstream consumer-check procedure. See `docs/releasing.md`
+> for the fork's actual policy.
 
 This purpose is to verify selected publicly shipped bytes and their offline CLI
 surface independently of the source checkout. DSR remains the sole quality,

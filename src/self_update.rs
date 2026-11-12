@@ -1,9 +1,21 @@
-//! Verified in-place self-updater for Pi (bd-cv653.7.10).
+//! Self-update types for Pi (bd-cv653.7.10), inherited from upstream.
 //!
-//! Provides `pi self-update [--version <tag>] [--check]` with:
+//! Upstream published GitHub-release assets and `pi self-update` swapped the
+//! running binary in place against them. **This fork publishes no release feed**
+//! — distribution is a Homebrew formula outside the repository — so
+//! `SelfUpdater` has no feed to resolve and is not wired to the command.
+//! `pi self-update` now reports the package manager that owns the binary
+//! (`PackageManager::detect`, the only part with a real call site in `src/`).
+//!
+//! What remains here is retained deliberately, not as a shim: the asset-naming,
+//! checksum, and redirect logic is exercised by `tests/self_update.rs` and is
+//! the only record of the upstream contract. Removing `SelfUpdater` and its
+//! integration test is a follow-up that needs permission for file deletion.
+//!
+//! Original upstream behavior:
 //! - Package manager detection (Homebrew, APT, Pacman, Nix, Cargo) with refusal & remediation
 //! - SHA-256 checksum verification against `SHA256SUMS` (fail-closed)
-//! - Multi-lane artifact resolution (DSR bare-binary naming and release archives)
+//! - Multi-lane artifact resolution (upstream bare-binary naming and release archives)
 //! - Atomic swap with rollback on failed post-update smoke test
 //! - Idempotent no-op when already on the target version
 

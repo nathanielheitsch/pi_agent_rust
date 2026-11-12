@@ -152,23 +152,36 @@ details would pull this project away from the product we want to build.
 - User-facing copy must not call Pi Rust a drop-in replacement. Describe the
   actual supported behavior and independently valuable product surface.
 
-## Build, Quality, and Release Authority: DSR Only
+## Build, Quality, and Release Authority: Local Gate Only (DSR Retired in This Fork)
 
 **NEVER use GitHub Actions for this repository, for any reason.** Do not enable,
 dispatch, rerun, cancel, or cite a GitHub Actions workflow as evidence. Workflow
 files may remain in the tree as historical reference, but they are permanently
 non-authoritative and must stay disabled.
 
-- Doodlestein Self-Releaser (`dsr`) is the exclusive quality, cross-platform
-  build, packaging, signing, and release authority.
-- Use `dsr quality --tool pi_agent_rust`, `dsr build pi_agent_rust`, and
-  `dsr release pi_agent_rust <version>` (or the corresponding fail-closed DSR
-  operation) instead of any Actions workflow or ad hoc release upload.
-- RCH is an implementation detail that DSR may use to offload compilation.
-  Agents must not invoke Cargo or RCH directly as an alternate quality path.
-- A tag, local binary, RCH result, or source build is not a release. A release
-  exists only after DSR publishes the expected artifacts and DSR verification
-  succeeds against the public release.
+**Doodlestein Self-Releaser (`dsr`) is retired as an authority here.** It was
+inherited from the upstream repository (Dicklesworthstone), where it is that
+author's private release infrastructure. It is not part of this codebase: it
+lives in `~/.config/dsr/`, its registry entry points at the upstream GitHub repo,
+and four of its seven quality lanes are `rch exec` offloads to a remote worker
+fleet that does not exist on this host — so every compile, Clippy, and test lane
+refuses with exit 103 (`bd-rch-dsr-remote-refusal-hcjgg`). No artifact or
+manifest has ever been produced by it here, and no signing keypair is
+configured. Its remaining rules are therefore not evidence of anything.
+
+- **The quality authority is `scripts/verify_local.sh`.** It runs the same
+  commands the upstream recipe registered, minus the RCH transport, so the
+  evidence is equivalent and executes locally.
+- **No release pipeline exists yet, by decision.** This fork ships no
+  cross-platform artifacts, no minisign signatures, and no published release
+  until the owner is satisfied with a beta. Do not build, tag, or publish a
+  release, and do not create or repair release infrastructure, without an
+  explicit request. A tag or a local binary is not a release.
+- **Distribution is Homebrew, not the in-tree installer.** Do not add or fix a
+  self-update path, installer upload, or asset pipeline on the assumption that
+  a release feed exists. See `## Distribution` below.
+- Cargo is the toolchain and the gate runner. Run `scripts/verify_local.sh`
+  rather than hand-picking a subset of lanes as the authoritative result.
 
 ---
 
@@ -178,18 +191,23 @@ non-authoritative and must stay disabled.
 point:**
 
 ```bash
-dsr quality --tool pi_agent_rust
+scripts/verify_local.sh            # full gate: fmt, check, clippy, test, repo gates
+scripts/verify_local.sh --fast     # skip the full test suite and installer lanes
+scripts/verify_local.sh --json     # machine-readable per-lane result
 ```
 
-The registered DSR recipe owns formatting, compiler checks, Clippy, unit,
-conformance, integration, and required feature lanes. Do not run the underlying
-Cargo commands directly, and do not use a direct RCH invocation as a substitute.
-DSR owns target/temp placement and any RCH delegation needed to avoid local
-contention.
+The script owns formatting, compiler checks, Clippy, unit tests, and the
+repository gates (`check_module_reachability.py`, `check_fixture_read_patience.py`,
+`tests/installer_regression.sh`). It pins the toolchain named in
+`rust-toolchain.toml`, scrubs inherited `PI_*` session variables, and sets
+`RUST_MIN_STACK` and `PI_PROVIDER_REPLAY_GIT_COMMIT` the way the upstream recipe
+did. Do not report a hand-picked subset of Cargo commands as the authoritative
+quality result.
 
-If the repository's load-admission rule blocks DSR, record the exact hold and
-leave the relevant Bead open. Static review is useful but does not become a
-compile, test, or quality claim.
+Static review is not a compile, test, or quality claim. If the gate cannot run,
+record the exact hold and leave the relevant Bead open.
+
+If you see errors, **carefully understand and resolve each issue**. Read sufficient context to fix them the RIGHT way.
 
 If you see errors, **carefully understand and resolve each issue**. Read sufficient context to fix them the RIGHT way.
 
@@ -221,9 +239,10 @@ Install section of `docs/sdk.md`.
 
 ## Testing
 
-The DSR quality recipe runs the project's required test lanes. Individual
-test names below describe coverage domains; they are not permission to bypass
-DSR with direct Cargo commands.
+`scripts/verify_local.sh` runs the project's required test lanes in its
+`cargo test --locked --all-targets --no-fail-fast` lane. Individual test names
+below describe coverage domains; they are not permission to report a hand-picked
+subset as the authoritative quality result.
 
 ### Test Categories
 
@@ -336,12 +355,36 @@ This port uses two key libraries from sibling projects:
 - Provider layer has 11 native provider implementation modules in `src/providers/`: Anthropic, OpenAI Chat, OpenAI Responses/Codex Responses, Gemini, Cohere, Azure OpenAI, Bedrock, Vertex AI, GitHub Copilot, GitLab Duo, and Cursor
 - Extension runtime, capability policy, and conformance harness are integrated
 
+# Distribution: Homebrew, Not the In-Tree Installer
+
+This fork is distributed through a Homebrew formula maintained by the owner,
+outside this repository. Nothing in the tree publishes a release feed.
+
+Consequences for agents:
+
+- `pi self-update`, `install.sh`, and `uninstall.sh` target the **upstream**
+  repository (`src/self_update.rs:27-29`, `install.sh` `OWNER`/`REPO` defaults) and
+  cannot resolve artifacts this fork does not publish. Treat them as inherited,
+  non-functional surfaces. Do not fix, extend, or "repair" them to point at a
+  feed that does not exist, and do not add new upgrade paths.
+- Do not add GitHub release uploads, asset naming schemes, `.sha256` sidecars,
+  or minisign wiring on the assumption a release exists.
+- When install or upgrade behavior is genuinely in scope, the correct change is
+  the Homebrew formula, which lives outside this repository — say so rather than
+  inventing in-tree machinery.
+- Homebrew's `cargo`/`rustc` shadow rustup's proxies and are **stable**, which
+  rejects the `-Z` rustflags in `.cargo/config.toml`. Use `scripts/verify_local.sh`,
+  which puts the pinned nightly on `PATH` first, or set
+  `PATH="$HOME/.rustup/toolchains/nightly-2026-08-31-aarch64-apple-darwin/bin:$PATH"`.
+
+---
+
 ### Performance Targets
 
 | Metric | Target | Notes |
 |--------|--------|-------|
 | Startup time | <100ms | No heavy initialization |
-| Binary size (release) | <48 MiB | DSR release-size budget with LTO + strip enabled (raised from 26 MiB for the v0.3.0 capability wave: BPE tables, LSP/DAP, MCP, eval kernels) |
+| Binary size (release) | <48 MiB | Size budget with LTO + strip enabled (raised from 26 MiB for the v0.3.0 capability wave: BPE tables, LSP/DAP, MCP, eval kernels). No release ships yet; measured against a local `--profile dist` build. |
 | TUI framerate | 60fps | Differential rendering |
 | Memory (idle) | <50MB | No leaks on long sessions |
 
@@ -375,10 +418,10 @@ The port uses fixture-based conformance tests to validate behavior matches expec
 ### Running Conformance Tests
 
 ```bash
-dsr quality --tool pi_agent_rust
+scripts/verify_local.sh
 ```
 
-Conformance is part of that fail-closed recipe. Do not substitute a hand-picked
+Conformance is part of that fail-closed gate. Do not substitute a hand-picked
 subset for the authoritative result.
 
 ---
@@ -467,7 +510,7 @@ work five times in one day (last: `5d3eb35a`).
   this session depending on cache warmth, a three-check cycle 25–45, and a
   change usually needs two or three cycles before it is committable.
   A lease taken when you start routinely expires before you commit. Use
-  `--ttl 14400` for a session that will run dsr, or renew while you wait. On
+  `--ttl 14400` for a session that will run the full quality gate, or renew while you wait. On
   2026-09-11 a lease on three files expired at 02:47:01Z and the sweeper
   committed those exact three files at 02:47:18Z.
 - **Never commit into someone else's reservation.** If the guard names a
@@ -515,7 +558,7 @@ Beads provides a lightweight, dependency-aware issue database and CLI (`br` - be
 - **Single source of truth:** Beads for task status/priority/dependencies; Agent Mail for conversation and audit
 - **Shared identifiers:** Use Beads issue ID (e.g., `br-123`) as Mail `thread_id` and prefix subjects with `[br-123]`
 - **Reservations:** When starting a task, call `file_reservation_paths()` with the issue ID in `reason`
-- **Outcome beads close on the outcome, not on the tooling:** a bead whose title names a run, a measurement, a published artifact, or a gate result closes only with that artifact's path and source SHA in the close reason. A shipped script, a dry run, a "blocked on RCH/DSR" note, or a static review closes nothing; leave the bead open with the exact hold recorded (this rule exists because three evidence beads were closed that way on 2026-08-28 and reopened on 2026-09-01)
+- **Outcome beads close on the outcome, not on the tooling:** a bead whose title names a run, a measurement, a published artifact, or a gate result closes only with that artifact's path and source SHA in the close reason. A shipped script, a dry run, a "blocked on the toolchain or the gate" note, or a static review closes nothing; leave the bead open with the exact hold recorded (this rule exists because three evidence beads were closed that way on 2026-08-28 and reopened on 2026-09-01)
 
 ### Typical Agent Flow
 
@@ -757,12 +800,19 @@ That failure happened at epic scale on 2026-08-24 (bd-33df9): five modules lande
 
 ---
 
-## RCH — DSR-Managed Compilation Transport
+## RCH — Retired Transport (Historical)
 
-RCH can offload compilation to remote workers, but agents do not invoke it
-directly in this repository. DSR decides when and how RCH is used and remains
-the only quality/build authority. An RCH result outside DSR is diagnostic only
-and cannot satisfy a Bead, integration, or release gate.
+RCH was the remote compilation transport the upstream DSR recipe used to
+offload `cargo check`/`clippy`/`test` to a worker fleet. Neither DSR nor that
+fleet exists in this fork, so RCH is not used here: there is no daemon socket,
+no registered worker, and no canonical project root on this host. `scripts/
+agent_verify.sh` is an inherited RCH wrapper pointing at another machine's
+checkout and must not be used — use `scripts/verify_local.sh` instead.
+
+`scripts/check_rch_artifact_sync.py` and any `--require-rch` flags in
+`scripts/release_gate.sh` are inherited artifacts of that retired program, not
+gates. Do not cite an RCH result as evidence for a Bead, integration, or
+release.
 
 ---
 
@@ -980,7 +1030,7 @@ Next steps (pick one)
 
 1. Decide how to handle the unrelated modified files above so we can resume cleanly.
 2. Triage beads_rust-orko (clippy/cargo warnings) and beads_rust-ydqr (rustfmt failures).
-3. If you want a full suite run later, fix the reported blockers and re-run `dsr quality --tool pi_agent_rust`.
+3. If you want a full suite run later, fix the reported blockers and re-run `scripts/verify_local.sh`.
 ```
 
 NEVER EVER DO THAT AGAIN. The answer is literally ALWAYS the same: those are changes created by the potentially dozen of other agents working on the project at the same time. This is not only a common occurence, it happens multiple times PER MINUTE. The way to deal with it is simple: you NEVER, under ANY CIRCUMSTANCE, stash, revert, overwrite, or otherwise disturb in ANY way the work of other agents. Just treat those changes identically to changes that you yourself made. Just fool yourself into thinking YOU made the changes and simply don't recall it for some reason.

@@ -3447,7 +3447,7 @@ async fn handle_subcommand(
             handle_stats(since, until, project.as_deref(), provider, model, &format)?;
         }
         cli::Commands::SelfUpdate { version, check } => {
-            handle_self_update(version.as_deref(), check).await?;
+            handle_self_update(version.as_deref(), check)?;
         }
         cli::Commands::Review {
             target,
@@ -6084,61 +6084,28 @@ fn handle_commit(
     Ok(())
 }
 
-/// `pi self-update [--version vX.Y.Z] [--check]` (bd-cv653.7.10): verified in-place
-/// binary upgrades with package manager detection and fail-closed SHA-256 verification.
-async fn handle_self_update(version: Option<&str>, check: bool) -> Result<()> {
-    let updater = pi::self_update::SelfUpdater::new();
-    let options = pi::self_update::SelfUpdateOptions {
-        version: version.map(ToString::to_string),
-        check,
-        custom_manifest_url: None,
-        custom_download_base: None,
-    };
-
-    let status = updater.run(&options).await?;
-    match status {
-        pi::self_update::SelfUpdateStatus::AlreadyUpToDate { current_version } => {
-            println!("Pi is already up to date (v{current_version}).");
-        }
-        pi::self_update::SelfUpdateStatus::CheckResult {
-            current_version,
-            latest_version,
-            is_newer,
-            manager,
-        } => {
-            println!("Current version : v{current_version}");
-            println!("Latest release  : v{latest_version}");
-            if is_newer {
-                println!("An update is available (v{current_version} -> v{latest_version}).");
-                if manager == pi::self_update::PackageManager::Manual {
-                    println!("Run `pi self-update` to perform an in-place upgrade.");
-                } else if let Some(cmd) = manager.upgrade_command() {
-                    println!("Pi is installed via package manager. Run `{cmd}` to update.");
-                }
-            } else {
-                println!("You are on the latest version.");
-            }
-        }
-        pi::self_update::SelfUpdateStatus::ManagedExternally {
-            manager: _,
-            upgrade_command,
-        } => {
-            println!("Pi is installed via a package manager.");
-            println!("Please update via: {upgrade_command}");
-        }
-        pi::self_update::SelfUpdateStatus::Updated {
-            previous_version,
-            new_version,
-            backup_path,
-        } => {
-            println!("Successfully updated Pi from v{previous_version} to v{new_version}!");
-            println!(
-                "Backup of previous binary saved at: {}",
-                backup_path.display()
-            );
-        }
+/// `pi self-update` — advisory only in this fork.
+///
+/// Upstream Pi Rust published GitHub-release assets and upgraded the binary in
+/// place against them. This fork publishes nothing: distribution is a Homebrew
+/// formula maintained outside the repository, so `SelfUpdater` would probe
+/// `Dicklesworthstone/pi_agent_rust` releases that are not ours and cannot exist.
+/// The command therefore reports how to upgrade through the package manager that
+/// actually owns the binary and refuses to touch it otherwise.
+fn handle_self_update(_version: Option<&str>, _check: bool) -> Result<()> {
+    let exe = std::env::current_exe()?;
+    let manager = pi::self_update::PackageManager::detect(&exe);
+    println!("This Pi Rust build has no published release feed, so in-place");
+    println!("self-update is disabled in this fork.");
+    if let Some(cmd) = manager.upgrade_command() {
+        println!("Upgrades are managed externally. Run `{cmd}`.");
+    } else {
+        println!(
+            "The running binary ({}) is not managed by a package manager; reinstall ",
+            exe.display()
+        );
+        println!("from source with `cargo install --path .`, or use a Homebrew formula.");
     }
-
     Ok(())
 }
 

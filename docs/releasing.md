@@ -1,5 +1,12 @@
 # Releasing pi_agent_rust
 
+> **Superseded in this fork.** This document describes the upstream release
+> program. This fork publishes no release: no tags, no archives, no signatures,
+> no pipeline, and no DSR or RCH lane — that work waits for a beta the owner is
+> happy with, and distribution in the meantime is a Homebrew formula outside this
+> repository. Quality work runs through `scripts/verify_local.sh`. Retained as a
+> record of the upstream contract; not instructions.
+
 This repo ships:
 - A crates.io package: `pi_agent_rust` (Cargo `[package].name`)
 - A library crate: `pi` (Cargo `[lib].name`)

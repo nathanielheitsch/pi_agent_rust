@@ -2663,13 +2663,14 @@ pub enum Commands {
         message: Option<String>,
     },
 
-    /// Verified in-place self-updater for Pi binary (bd-cv653.7.10)
+    /// Report how to upgrade this build (this fork publishes no release feed,
+    /// so in-place self-update is disabled; upgrades come from Homebrew)
     #[command(name = "self-update")]
     SelfUpdate {
-        /// Target version to update to (e.g. v0.2.0 or 0.2.0; defaults to latest release)
+        /// Unused in this fork: no release feed exists to select a version from
         #[arg(long)]
         version: Option<String>,
-        /// Check for available updates without applying any binary changes
+        /// Unused in this fork: accepted for compatibility with upstream usage
         #[arg(long)]
         check: bool,
     },
