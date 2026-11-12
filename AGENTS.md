@@ -207,6 +207,23 @@ quality result.
 Static review is not a compile, test, or quality claim. If the gate cannot run,
 record the exact hold and leave the relevant Bead open.
 
+### Local disk budget (mandatory)
+
+- Dev/test builds use line-table debug info, no incremental compilation, and
+  two Cargo jobs by default. Do not override these to run unattended builds.
+- `scripts/verify_local.sh` supervises the entire gate with
+  `scripts/cargo_disk_guard.py`: stop below 32 GiB free or at 64 GiB cache use.
+  Its exit 75 is a resource hold, never a passing gate or permission to retry
+  unguarded, raise budgets, or relocate duplicate caches.
+- Run focused commands through `python3 scripts/cargo_disk_guard.py -- cargo …`
+  as well. Bare Cargo does not start the disk monitor. The supervisor installs
+  an additional Unix rustc wrapper only within guarded commands. Set redirected
+  build roots in the environment before launch; unknown output roots fail closed.
+- No automatic deletion. Inspect usage and request explicit cleanup approval.
+  Never launch more builds into disk pressure; never clear artifacts while a
+  build is active. Do not export the supervisor's private
+  `PI_CARGO_DISK_GUARD_PID` marker or override `RUSTC_WRAPPER` to bypass safety.
+
 If you see errors, **carefully understand and resolve each issue**. Read sufficient context to fix them the RIGHT way.
 
 If you see errors, **carefully understand and resolve each issue**. Read sufficient context to fix them the RIGHT way.

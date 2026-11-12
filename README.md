@@ -3077,6 +3077,40 @@ gates. Cargo is the toolchain here: DSR and RCH were the upstream author's
 private release infrastructure and are retired in this fork, so there is no
 remote offload lane and no parallel build authority.
 
+#### Local build disk safety
+
+Dev and test profiles use line-table debug info (backtraces retain file/line
+locations) and disable incremental compilation; Cargo defaults to two compiler
+jobs. This avoids the full-DWARF and incremental-cache duplication that once
+grew `target/debug` beyond 100 GiB. Changing features, flags or toolchains can
+still leave old artifacts; Cargo does not bound the build cache automatically.
+
+`scripts/cargo_disk_guard.py` supervises the entire local gate, including build
+scripts and tests. It refuses/stops its owned process family below **32 GiB free**
+on build/temp volumes or at **64 GiB of build-cache allocation**. Free space is
+sampled every two seconds; cache size every ten seconds, so these are stop
+thresholds, not filesystem quotas. It never deletes files or moves the cache.
+A refusal exits 75: inspect cache usage and obtain approval before cleanup;
+do not raise limits or bypass the guard just to complete a gate.
+
+The guarded command installs an additional rustc wrapper on Unix hosts only;
+Cargo configuration remains portable to native Windows. All focused build/test
+commands must use the supervisor too (bare Cargo does not start the monitor):
+
+```bash
+python3 scripts/cargo_disk_guard.py -- cargo test --locked --test <target>
+python3 scripts/test_cargo_disk_guard.py  # lightweight safety regression tests
+```
+
+Set any redirected `CARGO_TARGET_DIR` / `CARGO_BUILD_BUILD_DIR` before starting
+the supervisor. A compiler output outside its registered roots is refused rather
+than allowed onto an unmonitored volume. No separate per-agent caches are needed.
+
+The supervisor uses Python 3's standard library. Keep builds on the pinned
+toolchain; moving `CARGO_TARGET_DIR` to another directory on the same disk does
+not create capacity. Other applications or deliberately unguarded commands are
+outside this supervisor's control.
+
 Before launching swarms or heavyweight all-target gates, run
 `pi doctor --only swarm --format json`. The
 `pi.doctor.swarm_resource_preflight.v1` result fails closed when

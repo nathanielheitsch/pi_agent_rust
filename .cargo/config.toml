@@ -1,3 +1,9 @@
+# Bound compiler fanout on every host. Whole-build disk supervision lives in
+# scripts/verify_local.sh and scripts/cargo_disk_guard.py (not a Unix-only
+# executable installed as a global Cargo wrapper on Windows).
+[build]
+jobs = 2
+
 # Platform-specific build configuration.
 #
 # FreeBSD installs third-party libraries (clang, openssl, sqlite, …) under

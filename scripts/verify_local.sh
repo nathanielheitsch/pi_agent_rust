@@ -77,10 +77,23 @@ for arg in "$@"; do
   esac
 done
 
+# Supervise the whole gate, not just admission or individual rustc calls: build
+# scripts, test fixtures and linker subprocesses can all write large files.
+# Validate live supervisor ancestry; a stale environment marker is not admission.
+# Establish temporary storage before monitoring, and preserve it in every lane.
+export TMPDIR="${TMPDIR:-/tmp}"
+python3 "$ROOT/scripts/cargo_disk_guard.py" --is-supervised
+GUARD_STATE=$?
+if [ "$GUARD_STATE" -eq 1 ]; then
+  exec python3 "$ROOT/scripts/cargo_disk_guard.py" -- bash "$ROOT/scripts/verify_local.sh" "$@"
+elif [ "$GUARD_STATE" -ne 0 ]; then
+  exit "$GUARD_STATE"
+fi
+
 # Deterministic environment: scrub inherited Pi session variables.
 ENV=(env -u PI_MODEL -u PI_PROVIDER -u PI_CODING_AGENT -u PI_SESSION_FILE
      -u PI_SESSION_ID -u PI_MANAGED_INSTALL_ROOT -u PI_REASONING_LEVEL)
-ENV+=(RUST_MIN_STACK=16777216 TMPDIR=/tmp CARGO_INCREMENTAL=0)
+ENV+=(RUST_MIN_STACK=16777216 CARGO_INCREMENTAL=0)
 if COMMIT="$(git rev-parse HEAD 2>/dev/null)"; then
   ENV+=(PI_PROVIDER_REPLAY_GIT_COMMIT="$COMMIT")
 fi
@@ -165,6 +178,9 @@ run_clippy_lane() {
   rm -f "$log" "$errlog" "$errlog.clippy"
   record_lane "$name" "$lane_exit" "$((ended_ms - started_ms))"
 }
+
+# Lightweight regression tests run before any potentially large compilation.
+run_lane "Cargo disk guard" python3 scripts/test_cargo_disk_guard.py
 
 # 1-3. Formatting, compiler, and lint gates.
 run_lane "cargo fmt --check" cargo fmt --check

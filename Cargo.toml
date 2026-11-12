@@ -582,11 +582,12 @@ opt-level = 3
 
 [profile.dev]
 opt-level = 0
-debug = true
+# Keep dev/test artifacts identical where possible. Full DWARF plus incremental
+# state previously consumed over 100 GiB in two days on a developer machine.
+debug = "line-tables-only"
+incremental = false
 
 [profile.test]
-# Full-suite RCH workers have limited artifact storage; keep test binaries
-# debuggable enough for line traces without emitting full debug sections.
 debug = "line-tables-only"
 incremental = false
 
