@@ -669,3 +669,38 @@ suboptimal_flops = "allow"
 # charmed-glamour = { path = "../charmed_rust/crates/glamour" }
 # charmed-harmonica = { path = "../charmed_rust/crates/harmonica" }
 # fsqlite = { path = "../frankensqlite/crates/fsqlite" }
+#
+# ---------------------------------------------------------------------------
+# Vendored rquickjs: the paired QuickJS pending-top-level-await repair (bd-p0a-sigtrap-4pqc0)
+# ---------------------------------------------------------------------------
+# TRACKED, unlike the sibling-checkout block above. `vendor/rquickjs-sys` and
+# `vendor/rquickjs-core` are the locked 0.12.2 sources copied out of the crates.io registry and
+# patched in place; they are not a local-development convenience and must be committed.
+#
+# Why vendoring rather than a version bump: upstream quickjs-ng PR 1877 ("must not destroy
+# modules on shutdown") is still unmerged, so no released rquickjs contains the fix, and
+# moving to rquickjs 0.14 would be an unrelated upgrade. The two halves are load-bearing
+# together:
+#   * `quickjs.c` — `js_free_value_rt` frees a refcount-released `JSModuleDef` instead of
+#     `abort()`ing, and `js_free_module_def` releases the module's own reference after
+#     `list_del`, so a module still referenced by a pending top-level-await reaction is not
+#     freed out from under `js_c_function_data_finalizer`.
+#   * `src/value/module.rs` — `Module::declare`/`Module::load` release the owned compile-only /
+#     bytecode-read `JSValue`, because `Module` stores only the raw pointer. Without it every
+#     declared module leaks a reference the engine fix then cannot free.
+#
+# Neither half alone works: the engine fix alone leaks every declared module, the binding fix
+# alone leaves the use-after-free. Engine-only was measured at 20 declared modules still alive
+# after `JS_FreeRuntime`; the pair measures 0 with 0 ASan errors.
+#
+# Trimming: registry bulk Cargo never reads (docs, tests, examples, gen, qjs/qjsc binaries,
+# build-system files, and test262/support scripts) is simply not copied into `vendor/`. Everything
+# `build.rs` reads is kept, including the generated Unicode table, every pre-generated target
+# binding under `src/bindings/`, and `quickjs/api-test.c` — compiled by nothing in Cargo, but
+# patched because pristine api-test double-frees `mod` and aborts with this repair.
+# The upstream crate's `.gitignore` excludes `target`, but locked 0.12.2 stores bindings under
+# `src/bindings/` (verified from its `build.rs`), not `target/`; this vendored tree preserves
+# that actual layout and has no `target/` directory.
+[patch.crates-io]
+rquickjs-sys = { path = "vendor/rquickjs-sys" }
+rquickjs-core = { path = "vendor/rquickjs-core" }

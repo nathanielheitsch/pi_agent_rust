@@ -6802,8 +6802,6 @@ dependencies = [
 [[package]]
 name = "rquickjs-core"
 version = "0.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16e4f499ac5b943d97ee6dbc44f23c2c10426f420f7d2f1793d6318911b6608c"
 dependencies = [
  "async-lock",
  "hashbrown 0.17.1",
@@ -6831,8 +6829,6 @@ dependencies = [
 [[package]]
 name = "rquickjs-sys"
 version = "0.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a13ac243b86a74120814ef7e9e30ad5a2c1199b7b9963b1cf7c84e4cdc1cad99"
 dependencies = [
  "bindgen",
  "cc",

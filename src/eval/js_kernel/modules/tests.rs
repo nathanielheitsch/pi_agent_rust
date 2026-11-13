@@ -188,6 +188,89 @@ fn module_authority_is_refreshed_for_each_kernel_request() {
 }
 
 #[test]
+fn ordinary_rejected_and_unresolvable_imports_terminate() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("ordinary.mjs"), "export const answer = 42;").unwrap();
+    std::fs::write(
+        dir.path().join("rejected.mjs"),
+        "throw new Error('expected rejection'); export const answer = 0;",
+    )
+    .unwrap();
+    let kernel = JsKernel::spawn_in(dir.path()).unwrap();
+    assert_eq!(
+        succeeds(&kernel, "(await import('./ordinary.mjs')).answer")
+            .result
+            .as_deref(),
+        Some("42")
+    );
+    assert!(!cell(&kernel, "await import('./rejected.mjs')").ok);
+    assert!(!cell(&kernel, "await import('./missing.mjs')").ok);
+}
+
+#[test]
+fn repeated_pending_module_timeouts_retire_each_realm() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("slow.mjs"),
+        "globalThis.moduleMarker = 7; await sleep(60000); export const done = true;",
+    )
+    .unwrap();
+    let kernel = JsKernel::spawn_in(dir.path()).unwrap();
+    for cycle in 0..3 {
+        let stopped = kernel
+            .submit(
+                "await import('./slow.mjs')".into(),
+                Instant::now() + Duration::from_millis(50),
+            )
+            .unwrap()
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
+        assert!(!stopped.ok, "cycle {cycle} unexpectedly completed");
+        assert!(stopped.error.as_ref().unwrap().contains("EVAL_STATE_RESET"));
+        assert_eq!(
+            succeeds(&kernel, "typeof moduleMarker").result.as_deref(),
+            Some("\"undefined\"")
+        );
+    }
+}
+
+#[test]
+fn native_data_module_declaration_and_evaluation_keep_raw_module_ownership() {
+    let runtime = rquickjs::Runtime::new().unwrap();
+    let context = rquickjs::Context::full(&runtime).unwrap();
+    let evaluation = context.with(|ctx| {
+        let module = super::data::declare_text(&ctx, "native-data", "still alive")?;
+        let (_, promise) = module.eval()?;
+        promise.finish::<()>()
+    });
+    assert!(evaluation.is_ok());
+}
+
+#[test]
+fn declared_modules_survive_gc_before_and_without_evaluation() {
+    let runtime = rquickjs::Runtime::new().unwrap();
+    let context = rquickjs::Context::full(&runtime).unwrap();
+    let result = context.with(|ctx| {
+        let never_evaluated =
+            rquickjs::Module::declare(ctx.clone(), "never-evaluated", "export const answer = 42;")?;
+        ctx.run_gc();
+        assert!(
+            !never_evaluated
+                .write(rquickjs::WriteOptions::default())?
+                .is_empty()
+        );
+        drop(never_evaluated);
+
+        let evaluated_later =
+            rquickjs::Module::declare(ctx.clone(), "evaluated-later", "export const answer = 42;")?;
+        ctx.run_gc();
+        let (_, promise) = evaluated_later.eval()?;
+        promise.finish::<()>()
+    });
+    assert!(result.is_ok());
+}
+
+#[test]
 fn unfinished_module_evaluation_obeys_the_cell_deadline_and_retires_its_realm() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
