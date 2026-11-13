@@ -2,6 +2,18 @@ use super::*;
 use crate::eval::js_kernel::{JsCellResponse, JsKernel};
 use std::time::Duration;
 
+fn restricted_owner() -> AgentCx {
+    let source = AgentCx::for_testing_with_io();
+    let _guard = source
+        .cx()
+        .clone()
+        .restrict::<asupersync::cx::cap::None>()
+        .set_current_restricted();
+    let owner = AgentCx::for_current_or_request();
+    assert!(!owner.capabilities().io); // ubs:ignore[rust.panic.assert-macros] -- This test-only fixture must reject accidental I/O authority.
+    owner
+}
+
 fn cell(kernel: &JsKernel, code: &str) -> JsCellResponse {
     kernel
         .submit(code.into(), Instant::now() + Duration::from_secs(5))
@@ -201,10 +213,7 @@ fn json_loads_share_existing_byte_budgets_and_current_owner_admission() {
     files.0.borrow_mut().source_bytes = MAX_SOURCE_BYTES - 1;
     assert!(files.read_module(&name).err().unwrap().contains("LIMIT"));
     files.0.borrow_mut().source_bytes = 0;
-    files.begin(
-        AgentCx::for_testing(),
-        Instant::now() + Duration::from_secs(5),
-    );
+    files.begin(restricted_owner(), Instant::now() + Duration::from_secs(5));
     assert!(files.read_module(&name).err().unwrap().contains("DENIED"));
     files.begin(AgentCx::for_testing_with_io(), Instant::now());
     assert!(files.read_module(&name).err().unwrap().contains("TIMEOUT"));
@@ -212,7 +221,7 @@ fn json_loads_share_existing_byte_budgets_and_current_owner_admission() {
         AgentCx::for_testing_with_io(),
         Instant::now() + Duration::from_secs(5),
     );
-    std::fs::File::create(&name)
+    std::fs::File::create(dir.path().join("data.json"))
         .unwrap()
         .set_len(2 * 1024 * 1024 + 1)
         .unwrap();
@@ -453,8 +462,12 @@ fn cached_text_resolution_requires_the_current_cells_io_authority() {
         "\"retained\""
     );
     let receiver = {
-        let owner = AgentCx::for_testing();
-        let _guard = owner.cx().clone().set_current_restricted();
+        let owner = AgentCx::for_testing_with_io();
+        let _guard = owner
+            .cx()
+            .clone()
+            .restrict::<asupersync::cx::cap::None>()
+            .set_current_restricted();
         kernel
             .submit(
                 "await import('./asset.txt', {with:{type:'text'}})".into(),

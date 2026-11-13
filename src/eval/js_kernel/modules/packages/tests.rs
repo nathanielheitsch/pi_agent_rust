@@ -4,6 +4,18 @@ use crate::eval::js_kernel::{JsCellResponse, JsKernel};
 use std::sync::{Arc, atomic::AtomicBool};
 use std::time::{Duration, Instant};
 
+fn restricted_owner() -> AgentCx {
+    let source = AgentCx::for_testing_with_io();
+    let _guard = source
+        .cx()
+        .clone()
+        .restrict::<asupersync::cx::cap::None>()
+        .set_current_restricted();
+    let owner = AgentCx::for_current_or_request();
+    assert!(!owner.capabilities().io); // ubs:ignore[rust.panic.assert-macros] -- This test-only fixture must reject accidental I/O authority.
+    owner
+}
+
 fn files(root: &Path) -> ModuleFiles {
     let files = ModuleFiles::new(root.to_path_buf(), Arc::new(AtomicBool::new(false)));
     files.begin(
@@ -214,10 +226,7 @@ fn metadata_snapshots_permissions_and_budgets_are_realm_owned() {
             .unwrap(),
         first
     );
-    files.begin(
-        AgentCx::for_testing(),
-        Instant::now() + Duration::from_secs(2),
-    );
+    files.begin(restricted_owner(), Instant::now() + Duration::from_secs(2));
     assert!(
         files
             .resolve_path("eval_script", "pkg")
@@ -488,10 +497,7 @@ fn missing_metadata_and_lookup_limits_are_versioned_without_resetting_budgets() 
     assert_eq!(state.packages.manifests.len(), MAX_MANIFEST_LOOKUPS);
     assert_eq!(state.packages.bytes, 2 * (MAX_MANIFEST_LOOKUPS - 1));
     drop(state);
-    files.begin(
-        AgentCx::for_testing(),
-        Instant::now() + Duration::from_secs(5),
-    );
+    files.begin(restricted_owner(), Instant::now() + Duration::from_secs(5));
     assert!(
         manifest(&files, &root, &path, 1)
             .unwrap_err()

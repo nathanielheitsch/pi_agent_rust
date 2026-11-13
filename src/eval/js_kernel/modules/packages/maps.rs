@@ -779,10 +779,15 @@ mod tests {
                 .unwrap_err()
                 .contains("LIMIT")
         );
-        files.begin(
-            AgentCx::for_testing(),
-            Instant::now() + Duration::from_secs(10),
-        );
+        let source = AgentCx::for_testing_with_io();
+        let _guard = source
+            .cx()
+            .clone()
+            .restrict::<asupersync::cx::cap::None>()
+            .set_current_restricted();
+        let owner = AgentCx::for_current_or_request();
+        assert!(!owner.capabilities().io); // ubs:ignore[rust.panic.assert-macros] -- This test-only fixture must reject accidental I/O authority.
+        files.begin(owner, Instant::now() + Duration::from_secs(10));
         assert!(
             super::super::resolve(&files, &root, &root, "#value", 0)
                 .unwrap_err()

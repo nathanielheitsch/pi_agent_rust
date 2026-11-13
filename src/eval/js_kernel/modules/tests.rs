@@ -2,6 +2,18 @@ use super::*;
 use crate::eval::js_kernel::{JsCellResponse, JsKernel};
 use std::time::Duration;
 
+fn restricted_owner() -> AgentCx {
+    let source = AgentCx::for_testing_with_io();
+    let _guard = source
+        .cx()
+        .clone()
+        .restrict::<asupersync::cx::cap::None>()
+        .set_current_restricted();
+    let owner = AgentCx::for_current_or_request();
+    assert!(!owner.capabilities().io); // ubs:ignore[rust.panic.assert-macros] -- This test-only fixture must reject accidental I/O authority.
+    owner
+}
+
 fn cell(kernel: &JsKernel, code: &str) -> JsCellResponse {
     kernel
         .submit(code.into(), Instant::now() + Duration::from_secs(5))
@@ -152,8 +164,12 @@ fn module_authority_is_refreshed_for_each_kernel_request() {
     let kernel = JsKernel::spawn_in(dir.path()).unwrap();
     succeeds(&kernel, "globalThis.previous = await import('./value.mjs')");
     let receiver = {
-        let owner = AgentCx::for_testing();
-        let _guard = owner.cx().clone().set_current_restricted();
+        let owner = AgentCx::for_testing_with_io();
+        let _guard = owner
+            .cx()
+            .clone()
+            .restrict::<asupersync::cx::cap::None>()
+            .set_current_restricted();
         kernel
             .submit(
                 "await import('./value.mjs')".into(),
@@ -233,10 +249,7 @@ fn admission_checks_the_active_owner_before_any_file_work() {
     let name = files.resolve_path("eval_script", "./module.js").unwrap();
     files.finish();
     assert!(files.read_module(&name).err().unwrap().contains("CLOSED"));
-    files.begin(
-        AgentCx::for_testing(),
-        Instant::now() + Duration::from_secs(5),
-    );
+    files.begin(restricted_owner(), Instant::now() + Duration::from_secs(5));
     assert!(
         files
             .resolve_path("eval_script", "./missing.js")

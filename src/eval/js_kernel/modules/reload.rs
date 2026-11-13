@@ -114,6 +114,18 @@ mod tests {
     use std::sync::{Arc, atomic::AtomicBool};
     use std::time::{Duration, Instant};
 
+    fn restricted_owner() -> AgentCx {
+        let source = AgentCx::for_testing_with_io();
+        let _guard = source
+            .cx()
+            .clone()
+            .restrict::<asupersync::cx::cap::None>()
+            .set_current_restricted();
+        let owner = AgentCx::for_current_or_request();
+        assert!(!owner.capabilities().io); // ubs:ignore[rust.panic.assert-macros] -- This test-only fixture must reject accidental I/O authority.
+        owner
+    }
+
     fn files(root: &Path) -> ModuleFiles {
         let files = ModuleFiles::new(root.to_path_buf(), Arc::new(AtomicBool::new(false)));
         begin(&files);
@@ -244,10 +256,7 @@ mod tests {
         assert!(files.reload().unwrap_err().contains("RELOAD_ORDER"));
         files.finish();
         assert!(files.reload().unwrap_err().contains("CLOSED"));
-        files.begin(
-            AgentCx::for_testing(),
-            Instant::now() + Duration::from_secs(5),
-        );
+        files.begin(restricted_owner(), Instant::now() + Duration::from_secs(5));
         assert!(files.reload().unwrap_err().contains("DENIED"));
         let owner = AgentCx::for_testing_with_io();
         owner.set_cancel_requested(true);
